@@ -1,0 +1,13 @@
+# .NET build output
+**/bin/
+**/obj/
+*.user
+*.suo
+
+# Node dependencies & build output
+**/node_modules/
+**/dist/
+
+# System files
+.DS_Store
+Thumbs.db
