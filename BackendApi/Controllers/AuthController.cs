@@ -11,7 +11,7 @@ using System.Text;
 namespace BackendApi.Controllers;
 
 [ApiController]
-[Route("api")]
+[Route("api/auth")]
 public class AuthController : ControllerBase
 {
     private readonly AppDbContext _db;

@@ -26,7 +26,7 @@ public class ClassesController : ControllerBase
 
     [HttpPost]
     [Authorize(Roles = "Admin")]
-    public async Task<IActionResult> Create([FromBody] ClassEntity entity)
+    public async Task<IActionResult> Create([FromBody] Class entity)
     {
         _db.Classes.Add(entity);
         await _db.SaveChangesAsync();

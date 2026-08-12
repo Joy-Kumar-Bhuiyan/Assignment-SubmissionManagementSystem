@@ -118,8 +118,17 @@ public class SubmissionsController : ControllerBase
     [Authorize(Roles = "Teacher,Admin")]
     public async Task<IActionResult> GradeSubmission(int id, [FromBody] GradeDto grade)
     {
-        var sub = await _db.Submissions.FindAsync(id);
+        var sub = await _db.Submissions
+            .Include(s => s.Assignment)
+            .FirstOrDefaultAsync(s => s.Id == id);
+            
         if (sub == null) return NotFound();
+
+        // Enforce business rule: Cannot grade beyond max marks
+        if (grade.Marks.HasValue && sub.Assignment != null && grade.Marks.Value > sub.Assignment.MaxMarks)
+        {
+            return BadRequest(new { message = $"Marks cannot exceed the maximum allowed marks ({sub.Assignment.MaxMarks})." });
+        }
 
         sub.Marks = grade.Marks;
         sub.Feedback = grade.Feedback;
@@ -128,7 +137,30 @@ public class SubmissionsController : ControllerBase
         await _db.SaveChangesAsync();
         return Ok(sub);
     }
+
+    [HttpPatch("{id}/status")]
+    [HttpPut("{id}/status")]
+    [Authorize(Roles = "Teacher,Admin")]
+    public async Task<IActionResult> UpdateSubmissionStatus(int id, [FromBody] UpdateStatusDto dto)
+    {
+        var submission = await _db.Submissions.FindAsync(id);
+        if (submission == null)
+        {
+            return NotFound(new { message = "Submission not found" });
+        }
+
+        if (string.IsNullOrWhiteSpace(dto.Status))
+        {
+            return BadRequest(new { message = "Status cannot be empty" });
+        }
+
+        submission.Status = dto.Status;
+        await _db.SaveChangesAsync();
+
+        return Ok(submission);
+    }
 }
 
 public record CreateSubmissionDto(int AssignmentId, string AnswerText);
 public record GradeDto(int? Marks, string Feedback, string? Status);
+public record UpdateStatusDto(string Status);

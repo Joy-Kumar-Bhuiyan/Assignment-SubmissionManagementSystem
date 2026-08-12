@@ -73,6 +73,60 @@ public class AssignmentsController : ControllerBase
         });
     }
 
+    // -------------------------------------------------------------
+    // 1. GET SINGLE ASSIGNMENT DETAIL
+    // -------------------------------------------------------------
+    [HttpGet("{id}")]
+    public async Task<IActionResult> GetAssignmentById(int id)
+    {
+        var userRole = User.FindFirst(ClaimTypes.Role)?.Value ?? "";
+        var email = User.FindFirst(ClaimTypes.Email)?.Value 
+                 ?? User.FindFirst(ClaimTypes.Name)?.Value 
+                 ?? User.Identity?.Name;
+
+        var assignment = await _db.Assignments
+            .Include(a => a.Class)
+            .Include(a => a.Subject)
+            .FirstOrDefaultAsync(a => a.Id == id);
+
+        if (assignment == null)
+        {
+            return NotFound(new { message = "Assignment not found." });
+        }
+
+        // Student Access Rules: Must be published AND match their class (or be General)
+        if (userRole == "Student")
+        {
+            if (assignment.IsDraft)
+            {
+                return Forbid();
+            }
+
+            var student = await _db.Users.FirstOrDefaultAsync(u => u.Email == email);
+            int? studentClassId = student?.ClassId;
+
+            if (assignment.ClassId != null && assignment.ClassId != studentClassId)
+            {
+                return Forbid();
+            }
+        }
+
+        return Ok(new
+        {
+            assignment.Id,
+            assignment.Title,
+            assignment.Description,
+            assignment.MaxMarks,
+            assignment.CreatedDate,
+            assignment.DueDate,
+            assignment.IsDraft,
+            assignment.ClassId,
+            ClassName = assignment.Class != null ? $"{assignment.Class.Name} ({assignment.Class.Section})" : "General",
+            assignment.SubjectId,
+            SubjectName = assignment.Subject != null ? assignment.Subject.Name : "General"
+        });
+    }
+
     [HttpPost]
     [Authorize(Roles = "Teacher,Admin")]
     public async Task<IActionResult> CreateAssignment([FromBody] UpsertAssignmentDto dto)
@@ -82,7 +136,10 @@ public class AssignmentsController : ControllerBase
             Title = dto.Title,
             Description = dto.Description,
             MaxMarks = dto.MaxMarks,
-            DueDate = dto.DueDate,
+            DueDate = dto.DueDate.HasValue 
+                ? DateTime.SpecifyKind(dto.DueDate.Value, DateTimeKind.Utc) 
+                : DateTime.UtcNow.AddDays(7),
+            CreatedDate = DateTime.UtcNow,
             IsDraft = dto.IsDraft,
             ClassId = dto.ClassId,
             SubjectId = dto.SubjectId
@@ -104,7 +161,10 @@ public class AssignmentsController : ControllerBase
         assignment.Title = dto.Title;
         assignment.Description = dto.Description;
         assignment.MaxMarks = dto.MaxMarks;
-        assignment.DueDate = dto.DueDate;
+        if (dto.DueDate.HasValue)
+        {
+            assignment.DueDate = DateTime.SpecifyKind(dto.DueDate.Value, DateTimeKind.Utc);
+        }
         assignment.IsDraft = dto.IsDraft;
         assignment.ClassId = dto.ClassId;
         assignment.SubjectId = dto.SubjectId;
@@ -129,12 +189,22 @@ public class AssignmentsController : ControllerBase
         return Ok(new { message = "Assignment deleted" });
     }
 
+    // -------------------------------------------------------------
+    // 2. GET SUBMISSIONS FOR A SPECIFIC ASSIGNMENT
+    // -------------------------------------------------------------
     [HttpGet("{id}/submissions")]
     [Authorize(Roles = "Teacher,Admin")]
     public async Task<IActionResult> GetAssignmentSubmissions(int id)
     {
+        var assignmentExists = await _db.Assignments.AnyAsync(a => a.Id == id);
+        if (!assignmentExists)
+        {
+            return NotFound(new { message = "Assignment not found." });
+        }
+
         var submissions = await _db.Submissions
             .Where(s => s.AssignmentId == id)
+            .OrderByDescending(s => s.SubmittedAt)
             .ToListAsync();
 
         return Ok(submissions);

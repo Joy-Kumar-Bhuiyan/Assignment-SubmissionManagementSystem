@@ -1,33 +1,40 @@
-import { useState, useEffect, useCallback } from 'react';
+import React, { useState, useEffect } from 'react';
 
-// Backend port configuration
-const API_BASE_URL = 'http://localhost:5000';
+const API_BASE = 'http://localhost:5000/api';
 
-function App() {
+// Helper function to safely parse arrays from standard JSON or EF Core $values wrapping
+const parseArrayData = (data) => {
+  if (Array.isArray(data)) return data;
+  if (data && Array.isArray(data.$values)) return data.$values;
+  if (data && Array.isArray(data.data)) return data.data; // Handles paginated responses
+  return [];
+};
+
+export default function App() {
   // Authentication State
-  const [token, setToken] = useState(() => localStorage.getItem('token') || '');
-  const [role, setRole] = useState(() => localStorage.getItem('role') || '');
-  const [email, setEmail] = useState(() => localStorage.getItem('email') || '');
-  const [password, setPassword] = useState('');
+  const [token, setToken] = useState(localStorage.getItem('token') || '');
+  const [role, setRole] = useState(localStorage.getItem('role') || '');
+  const [email, setEmail] = useState(localStorage.getItem('email') || '');
 
-  // Domain Data State
+  const [loginEmail, setLoginEmail] = useState('');
+  const [loginPassword, setLoginPassword] = useState('');
+  const [loginError, setLoginError] = useState('');
+
+  // Data States (Safely initialized as empty arrays)
   const [assignments, setAssignments] = useState([]);
   const [submissions, setSubmissions] = useState([]);
-  const [mySubmissions, setMySubmissions] = useState([]);
   const [usersList, setUsersList] = useState([]);
-
-  // Academic Management State (Classes & Subjects)
   const [classList, setClassList] = useState([]);
   const [subjectList, setSubjectList] = useState([]);
+  const [allocations, setAllocations] = useState([]);
+  const [settings, setSettings] = useState({ AcademicYear: '', AllowLateSubmissions: 'true' });
+
+  // Form States
+  const [newUser, setNewUser] = useState({ email: '', password: '', role: 'Student', classId: '' });
   const [newClass, setNewClass] = useState({ name: '', section: '' });
   const [newSubject, setNewSubject] = useState({ name: '', code: '' });
-
-  // Allocations & Application Settings State
-  const [allocations, setAllocations] = useState([]);
   const [newAllocation, setNewAllocation] = useState({ teacherEmail: '', classId: '', subjectId: '' });
-  const [settings, setSettings] = useState({ AcademicYear: '2026-2027', AllowLateSubmissions: 'true' });
 
-  // Form State (Assignment Creation & Editing)
   const [assignmentForm, setAssignmentForm] = useState({
     id: null,
     title: '',
@@ -39,140 +46,171 @@ function App() {
     subjectId: ''
   });
 
-  // Filter State (Submissions per assignment)
   const [selectedAssignmentFilter, setSelectedAssignmentFilter] = useState('ALL');
 
-  // Form Input State (Admin User Creation)
-  const [newUser, setNewUser] = useState({ email: '', password: '', role: 'Student', classId: '' });
+  // Modal State for Student Submissions
+  const [submitModal, setSubmitModal] = useState({ open: false, assignmentId: null, answerText: '' });
 
   // ---------------------------------------------------------------------------
-  // Data Fetching
+  // API Fetch Functions
   // ---------------------------------------------------------------------------
-  const fetchUsers = useCallback(async () => {
-    if (!token || role !== 'Admin') return;
+  const fetchAssignments = async () => {
     try {
-      const res = await fetch(`${API_BASE_URL}/api/users`, {
+      const res = await fetch(`${API_BASE}/assignments`, {
         headers: { Authorization: `Bearer ${token}` }
       });
       if (res.ok) {
         const data = await res.json();
-        setUsersList(data);
+        setAssignments(parseArrayData(data));
+      } else {
+        setAssignments([]);
       }
-    } catch (err) {
-      console.error('Error fetching users:', err);
+    } catch {
+      setAssignments([]);
     }
-  }, [token, role]);
+  };
 
-  const fetchAcademicData = useCallback(async () => {
-    if (!token || (role !== 'Admin' && role !== 'Teacher')) return;
+  const fetchSubmissions = async () => {
     try {
-      const [cRes, sRes] = await Promise.all([
-        fetch(`${API_BASE_URL}/api/classes`, { headers: { Authorization: `Bearer ${token}` } }),
-        fetch(`${API_BASE_URL}/api/subjects`, { headers: { Authorization: `Bearer ${token}` } })
-      ]);
-      if (cRes.ok) setClassList(await cRes.json());
-      if (sRes.ok) setSubjectList(await sRes.json());
-    } catch (err) {
-      console.error('Error fetching academic data:', err);
+      const endpoint = role === 'Student' ? `${API_BASE}/submissions/my` : `${API_BASE}/submissions`;
+      const res = await fetch(endpoint, {
+        headers: { Authorization: `Bearer ${token}` }
+      });
+      if (res.ok) {
+        const data = await res.json();
+        setSubmissions(parseArrayData(data));
+      } else {
+        setSubmissions([]);
+      }
+    } catch {
+      setSubmissions([]);
     }
-  }, [token, role]);
+  };
 
-  const fetchAllocationsAndSettings = useCallback(async () => {
-    if (!token || role !== 'Admin') return;
+  const fetchUsers = async () => {
+    if (role !== 'Admin') return;
     try {
-      const [aRes, sRes] = await Promise.all([
-        fetch(`${API_BASE_URL}/api/allocations`, { headers: { Authorization: `Bearer ${token}` } }),
-        fetch(`${API_BASE_URL}/api/settings`, { headers: { Authorization: `Bearer ${token}` } })
-      ]);
-      if (aRes.ok) setAllocations(await aRes.json());
-      if (sRes.ok) {
-        const data = await sRes.json();
-        if (Object.keys(data).length > 0) setSettings(data);
+      const res = await fetch(`${API_BASE}/users`, {
+        headers: { Authorization: `Bearer ${token}` }
+      });
+      if (res.ok) {
+        const data = await res.json();
+        setUsersList(parseArrayData(data));
+      } else {
+        setUsersList([]);
       }
-    } catch (err) {
-      console.error('Error loading system config:', err);
+    } catch {
+      setUsersList([]);
     }
-  }, [token, role]);
+  };
 
-  const fetchData = useCallback(async () => {
-    if (!token) return;
-    const authHeaders = { Authorization: `Bearer ${token}` };
-
+  const fetchClasses = async () => {
     try {
-      // 1. Fetch Active Assignments
-      const assignRes = await fetch(`${API_BASE_URL}/api/assignments`, { headers: authHeaders });
-      if (assignRes.ok) setAssignments(await assignRes.json());
-
-      // 2. Fetch All Submissions (Teacher / Admin)
-      if (role === 'Teacher' || role === 'Admin') {
-        const subRes = await fetch(`${API_BASE_URL}/api/submissions`, { headers: authHeaders });
-        if (subRes.ok) setSubmissions(await subRes.json());
+      const res = await fetch(`${API_BASE}/classes`, {
+        headers: { Authorization: `Bearer ${token}` }
+      });
+      if (res.ok) {
+        const data = await res.json();
+        setClassList(parseArrayData(data));
+      } else {
+        setClassList([]);
       }
-
-      // 3. Fetch Student's Personal Submissions
-      if (role === 'Student') {
-        const mySubRes = await fetch(`${API_BASE_URL}/api/submissions/my`, { headers: authHeaders });
-        if (mySubRes.ok) {
-          setMySubmissions(await mySubRes.json());
-        } else {
-          const altMySubRes = await fetch(`${API_BASE_URL}/api/submissions/my-submissions`, { headers: authHeaders });
-          if (altMySubRes.ok) setMySubmissions(await altMySubRes.json());
-        }
-      }
-
-      // 4. Fetch Academic & Admin Configuration Data
-      if (role === 'Admin' || role === 'Teacher') {
-        await fetchAcademicData();
-      }
-      if (role === 'Admin') {
-        await fetchUsers();
-        await fetchAllocationsAndSettings();
-      }
-    } catch (error) {
-      console.error('Error fetching portal data:', error);
+    } catch {
+      setClassList([]);
     }
-  }, [token, role, fetchUsers, fetchAcademicData, fetchAllocationsAndSettings]);
+  };
 
+  const fetchSubjects = async () => {
+    try {
+      const res = await fetch(`${API_BASE}/subjects`, {
+        headers: { Authorization: `Bearer ${token}` }
+      });
+      if (res.ok) {
+        const data = await res.json();
+        setSubjectList(parseArrayData(data));
+      } else {
+        setSubjectList([]);
+      }
+    } catch {
+      setSubjectList([]);
+    }
+  };
+
+  const fetchAllocations = async () => {
+    if (role !== 'Admin') return;
+    try {
+      const res = await fetch(`${API_BASE}/allocations`, {
+        headers: { Authorization: `Bearer ${token}` }
+      });
+      if (res.ok) {
+        const data = await res.json();
+        setAllocations(parseArrayData(data));
+      } else {
+        setAllocations([]);
+      }
+    } catch {
+      setAllocations([]);
+    }
+  };
+
+  const fetchSettings = async () => {
+    try {
+      const res = await fetch(`${API_BASE}/settings`, {
+        headers: { Authorization: `Bearer ${token}` }
+      });
+      if (res.ok) {
+        const data = await res.json();
+        const settingsObj = {};
+        parseArrayData(data).forEach((item) => {
+          settingsObj[item.key] = item.value;
+        });
+        setSettings(settingsObj);
+      }
+    } catch {
+      // Retain defaults if fetch fails
+    }
+  };
+
+  // Load portal data when token or role changes
   useEffect(() => {
-    fetchData();
-  }, [fetchData]);
+    if (token) {
+      fetchAssignments();
+      fetchSubmissions();
+      fetchClasses();
+      fetchSubjects();
+      fetchSettings();
+      if (role === 'Admin') {
+        fetchUsers();
+        fetchAllocations();
+      }
+    }
+  }, [token, role]);
 
   // ---------------------------------------------------------------------------
-  // Authentication Actions
+  // Event Handlers
   // ---------------------------------------------------------------------------
   const handleLogin = async (e) => {
     e.preventDefault();
+    setLoginError('');
     try {
-      let res = await fetch(`${API_BASE_URL}/api/auth/login`, {
+      const res = await fetch(`${API_BASE}/auth/login`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ email, password })
+        body: JSON.stringify({ email: loginEmail, password: loginPassword })
       });
-
-      if (!res.ok) {
-        res = await fetch(`${API_BASE_URL}/api/login`, {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ email, password })
-        });
-      }
-
+      const data = await res.json();
       if (res.ok) {
-        const data = await res.json();
         setToken(data.token);
         setRole(data.role);
         setEmail(data.email);
-        setPassword('');
-
         localStorage.setItem('token', data.token);
         localStorage.setItem('role', data.role);
         localStorage.setItem('email', data.email);
       } else {
-        alert('Invalid login credentials. Please check your email and password.');
+        setLoginError(data.message || 'Invalid login credentials');
       }
-    } catch (error) {
-      console.error('Login request failed:', error);
-      alert('Unable to connect to the backend server. Please check your API connection.');
+    } catch {
+      setLoginError('Could not connect to server.');
     }
   };
 
@@ -180,75 +218,57 @@ function App() {
     setToken('');
     setRole('');
     setEmail('');
-    setPassword('');
-    setAssignments([]);
-    setSubmissions([]);
-    setMySubmissions([]);
-    setUsersList([]);
-    setClassList([]);
-    setSubjectList([]);
-    setAllocations([]);
-    setSettings({ AcademicYear: '2026-2027', AllowLateSubmissions: 'true' });
     localStorage.clear();
   };
 
-  // ---------------------------------------------------------------------------
-  // Admin Handlers (Users, Classes, Subjects, Allocations, Settings)
-  // ---------------------------------------------------------------------------
   const handleCreateUser = async (e) => {
     e.preventDefault();
     try {
-      const payload = {
-        email: newUser.email,
-        password: newUser.password,
-        role: newUser.role,
-        classId: newUser.role === 'Student' && newUser.classId ? Number(newUser.classId) : null
-      };
-
-      const res = await fetch(`${API_BASE_URL}/api/users`, {
+      const res = await fetch(`${API_BASE}/users`, {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
           Authorization: `Bearer ${token}`
         },
-        body: JSON.stringify(payload)
+        body: JSON.stringify({
+          ...newUser,
+          classId: newUser.classId ? parseInt(newUser.classId) : null
+        })
       });
-
       if (res.ok) {
         alert('User created successfully!');
         setNewUser({ email: '', password: '', role: 'Student', classId: '' });
         fetchUsers();
       } else {
-        const errData = await res.json();
-        alert(errData.message || 'Failed to create user.');
+        const err = await res.json();
+        alert(err.message || 'Failed to create user');
       }
-    } catch (err) {
-      console.error('Error creating user:', err);
+    } catch {
+      alert('Error creating user.');
     }
   };
 
-  const handleDeleteUser = async (userId) => {
+  const handleDeleteUser = async (id) => {
     if (!window.confirm('Are you sure you want to delete this user?')) return;
     try {
-      const res = await fetch(`${API_BASE_URL}/api/users/${userId}`, {
+      const res = await fetch(`${API_BASE}/users/${id}`, {
         method: 'DELETE',
         headers: { Authorization: `Bearer ${token}` }
       });
       if (res.ok) {
-        alert('User deleted.');
         fetchUsers();
       } else {
         alert('Failed to delete user.');
       }
-    } catch (err) {
-      console.error('Error deleting user:', err);
+    } catch {
+      alert('Error deleting user.');
     }
   };
 
   const handleCreateClass = async (e) => {
     e.preventDefault();
     try {
-      const res = await fetch(`${API_BASE_URL}/api/classes`, {
+      const res = await fetch(`${API_BASE}/classes`, {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
@@ -257,21 +277,18 @@ function App() {
         body: JSON.stringify(newClass)
       });
       if (res.ok) {
-        alert('Class added successfully!');
         setNewClass({ name: '', section: '' });
-        fetchAcademicData();
-      } else {
-        alert('Failed to add class.');
+        fetchClasses();
       }
-    } catch (err) {
-      console.error('Error creating class:', err);
+    } catch {
+      alert('Failed to create class.');
     }
   };
 
   const handleCreateSubject = async (e) => {
     e.preventDefault();
     try {
-      const res = await fetch(`${API_BASE_URL}/api/subjects`, {
+      const res = await fetch(`${API_BASE}/subjects`, {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
@@ -280,21 +297,18 @@ function App() {
         body: JSON.stringify(newSubject)
       });
       if (res.ok) {
-        alert('Subject added successfully!');
         setNewSubject({ name: '', code: '' });
-        fetchAcademicData();
-      } else {
-        alert('Failed to add subject.');
+        fetchSubjects();
       }
-    } catch (err) {
-      console.error('Error creating subject:', err);
+    } catch {
+      alert('Failed to create subject.');
     }
   };
 
   const handleCreateAllocation = async (e) => {
     e.preventDefault();
     try {
-      const res = await fetch(`${API_BASE_URL}/api/allocations`, {
+      const res = await fetch(`${API_BASE}/allocations`, {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
@@ -302,25 +316,22 @@ function App() {
         },
         body: JSON.stringify({
           teacherEmail: newAllocation.teacherEmail,
-          classId: Number(newAllocation.classId),
-          subjectId: Number(newAllocation.subjectId)
+          classId: parseInt(newAllocation.classId),
+          subjectId: parseInt(newAllocation.subjectId)
         })
       });
       if (res.ok) {
-        alert('Teacher allocated successfully!');
         setNewAllocation({ teacherEmail: '', classId: '', subjectId: '' });
-        fetchAllocationsAndSettings();
-      } else {
-        alert('Failed to create allocation.');
+        fetchAllocations();
       }
-    } catch (err) {
-      console.error('Error creating allocation:', err);
+    } catch {
+      alert('Failed to assign teacher.');
     }
   };
 
   const handleSaveSetting = async (key, value) => {
     try {
-      const res = await fetch(`${API_BASE_URL}/api/settings`, {
+      const res = await fetch(`${API_BASE}/settings`, {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
@@ -329,48 +340,42 @@ function App() {
         body: JSON.stringify({ key, value })
       });
       if (res.ok) {
-        alert(`${key} updated!`);
-      } else {
-        alert(`Failed to update ${key}.`);
+        alert(`Setting "${key}" updated successfully!`);
+        fetchSettings();
       }
-    } catch (err) {
-      console.error('Error saving setting:', err);
+    } catch {
+      alert('Failed to update setting.');
     }
   };
 
-  // ---------------------------------------------------------------------------
-  // Assignment Save / Edit Actions
-  // ---------------------------------------------------------------------------
   const handleSaveAssignment = async (e) => {
     e.preventDefault();
-    const isEditing = Boolean(assignmentForm.id);
-    const url = isEditing
-      ? `${API_BASE_URL}/api/assignments/${assignmentForm.id}`
-      : `${API_BASE_URL}/api/assignments`;
-    const method = isEditing ? 'PUT' : 'POST';
-
     const payload = {
       title: assignmentForm.title,
       description: assignmentForm.description,
-      maxMarks: Number(assignmentForm.maxMarks),
-      dueDate: assignmentForm.dueDate ? new Date(assignmentForm.dueDate).toISOString() : null,
+      maxMarks: parseInt(assignmentForm.maxMarks),
+      dueDate: assignmentForm.dueDate || null,
       isDraft: assignmentForm.isDraft,
-      classId: assignmentForm.classId ? Number(assignmentForm.classId) : null,
-      subjectId: assignmentForm.subjectId ? Number(assignmentForm.subjectId) : null,
+      classId: assignmentForm.classId ? parseInt(assignmentForm.classId) : null,
+      subjectId: assignmentForm.subjectId ? parseInt(assignmentForm.subjectId) : null
     };
+
+    const isEdit = !!assignmentForm.id;
+    const url = isEdit ? `${API_BASE}/assignments/${assignmentForm.id}` : `${API_BASE}/assignments`;
+    const method = isEdit ? 'PUT' : 'POST';
 
     try {
       const res = await fetch(url, {
         method,
         headers: {
           'Content-Type': 'application/json',
-          Authorization: `Bearer ${token}`,
+          Authorization: `Bearer ${token}`
         },
-        body: JSON.stringify(payload),
+        body: JSON.stringify(payload)
       });
 
       if (res.ok) {
-        alert(`Assignment ${isEditing ? 'updated' : 'created'} successfully!`);
+        alert(isEdit ? 'Assignment updated!' : 'Assignment created!');
         setAssignmentForm({
           id: null,
           title: '',
@@ -379,15 +384,12 @@ function App() {
           dueDate: '',
           isDraft: false,
           classId: '',
-          subjectId: '',
+          subjectId: ''
         });
-        fetchData();
-      } else {
-        alert(`Failed to ${isEditing ? 'update' : 'create'} assignment.`);
+        fetchAssignments();
       }
-    } catch (err) {
-      console.error('Error saving assignment:', err);
-      alert('Network error while saving assignment.');
+    } catch {
+      alert('Failed to save assignment.');
     }
   };
 
@@ -397,216 +399,154 @@ function App() {
       title: assignment.title || '',
       description: assignment.description || '',
       maxMarks: assignment.maxMarks || 100,
-      dueDate: assignment.dueDate ? assignment.dueDate.slice(0, 16) : '',
-      isDraft: Boolean(assignment.isDraft),
+      dueDate: assignment.dueDate ? new Date(assignment.dueDate).toISOString().slice(0, 16) : '',
+      isDraft: assignment.isDraft || false,
       classId: assignment.classId || '',
-      subjectId: assignment.subjectId || '',
+      subjectId: assignment.subjectId || ''
     });
   };
 
-  const handleDeleteAssignment = async (assignmentId) => {
-    if (!window.confirm('Are you sure you want to delete this assignment?')) return;
-
+  const handleDeleteAssignment = async (id) => {
+    if (!window.confirm('Delete this assignment?')) return;
     try {
-      const response = await fetch(`${API_BASE_URL}/api/assignments/${assignmentId}`, {
+      const res = await fetch(`${API_BASE}/assignments/${id}`, {
         method: 'DELETE',
-        headers: {
-          Authorization: `Bearer ${token}`
-        }
+        headers: { Authorization: `Bearer ${token}` }
       });
-
-      if (response.ok) {
-        alert('Assignment deleted successfully!');
-        fetchData();
-      } else {
-        alert('Failed to delete assignment.');
+      if (res.ok) {
+        fetchAssignments();
       }
-    } catch (error) {
-      console.error('Error deleting assignment:', error);
-      alert('Network error while deleting assignment.');
+    } catch {
+      alert('Failed to delete assignment.');
     }
   };
 
-  // ---------------------------------------------------------------------------
-  // Submission & Grading Actions
-  // ---------------------------------------------------------------------------
-  const handleSubmitAnswer = async (assignmentId) => {
-    const answer = prompt('Enter your submission text:');
-    if (!answer || answer.trim() === '') return;
+  const handleOpenSubmitModal = (assignmentId) => {
+    setSubmitModal({ open: true, assignmentId, answerText: '' });
+  };
 
+  const handleSubmitAssignment = async (e) => {
+    e.preventDefault();
     try {
-      const response = await fetch(`${API_BASE_URL}/api/submissions`, {
+      const res = await fetch(`${API_BASE}/submissions`, {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
           Authorization: `Bearer ${token}`
         },
-        body: JSON.stringify({ assignmentId, answerText: answer })
+        body: JSON.stringify({
+          assignmentId: submitModal.assignmentId,
+          answerText: submitModal.answerText
+        })
       });
 
-      if (response.ok) {
-        alert('Submitted successfully!');
-        fetchData();
+      if (res.ok) {
+        alert('Assignment submitted successfully!');
+        setSubmitModal({ open: false, assignmentId: null, answerText: '' });
+        fetchSubmissions();
       } else {
-        const err = await response.json();
-        alert(err.message || 'Failed to submit answer.');
+        const err = await res.json();
+        alert(err.message || 'Submission failed.');
       }
-    } catch (error) {
-      console.error('Error submitting answer:', error);
-      alert('Network error while submitting answer.');
+    } catch {
+      alert('Error submitting assignment.');
     }
   };
 
-  // Alias for modal submission handler compatibility
-  const handleOpenSubmitModal = (assignmentId) => {
-    handleSubmitAnswer(assignmentId);
-  };
-
-  const handleGradeSubmission = async (subId) => {
-    const marks = prompt('Enter Marks:');
-    if (marks === null) return;
-
-    const feedback = prompt('Enter Teacher Feedback:');
-    if (feedback === null) return;
-
-    const status = prompt('Enter Status (e.g. Graded, Returned for Revision, Rejected):', 'Graded');
+  const handleGradeSubmission = async (submissionId) => {
+    const marksStr = prompt('Enter assigned marks:');
+    if (marksStr === null) return;
+    const feedback = prompt('Enter feedback for student:') || '';
 
     try {
-      const response = await fetch(`${API_BASE_URL}/api/submissions/${subId}/grade`, {
+      const res = await fetch(`${API_BASE}/submissions/${submissionId}/grade`, {
         method: 'PUT',
         headers: {
           'Content-Type': 'application/json',
           Authorization: `Bearer ${token}`
         },
-        body: JSON.stringify({ 
-          marks: marks !== '' ? parseInt(marks, 10) : null, 
+        body: JSON.stringify({
+          marks: parseInt(marksStr),
           feedback,
-          status: status || 'Graded'
+          status: 'Graded'
         })
       });
 
-      if (response.ok) {
+      if (res.ok) {
         alert('Graded successfully!');
-        fetchData();
+        fetchSubmissions();
       } else {
-        alert('Failed to grade submission.');
+        const err = await res.json();
+        alert(err.message || 'Failed to grade submission.');
       }
-    } catch (error) {
-      console.error('Error grading submission:', error);
-      alert('Network error while grading submission.');
+    } catch {
+      alert('Error grading submission.');
     }
   };
 
-  // Helper to resolve Class Name & Subject Name for Assignment cards
+  // ---------------------------------------------------------------------------
+  // Safe Array Operations & Tag Helpers
+  // ---------------------------------------------------------------------------
+  const safeAssignments = Array.isArray(assignments) ? assignments : [];
+  const safeSubmissions = Array.isArray(submissions) ? submissions : [];
+  const safeUsersList = Array.isArray(usersList) ? usersList : [];
+  const safeClassList = Array.isArray(classList) ? classList : [];
+  const safeSubjectList = Array.isArray(subjectList) ? subjectList : [];
+  const safeAllocations = Array.isArray(allocations) ? allocations : [];
+
   const getAssignmentTags = (a) => {
-    const className =
-      a.className ||
-      a.class?.name ||
-      (a.classId ? classList.find((c) => c.id === a.classId)?.name : null);
-
-    const section =
-      a.classSection ||
-      a.class?.section ||
-      (a.classId ? classList.find((c) => c.id === a.classId)?.section : null);
-
-    const subjectName =
-      a.subjectName ||
-      a.subject?.name ||
-      (a.subjectId ? subjectList.find((s) => s.id === a.subjectId)?.name : null);
-
+    const cls = safeClassList.find((c) => c.id === a.classId);
+    const sub = safeSubjectList.find((s) => s.id === a.subjectId);
     return {
-      className: className ? `${className}${section ? ` (${section})` : ''}` : 'General',
-      subjectName: subjectName || 'General'
+      className: cls ? `${cls.name} (${cls.section})` : null,
+      subjectName: sub ? `${sub.name}` : null
     };
   };
 
-  // Filter Submissions for Teacher/Admin View
-  const filteredSubmissions = submissions.filter((s) => {
-    if (selectedAssignmentFilter === 'ALL') return true;
-    return String(s.assignmentId) === String(selectedAssignmentFilter);
-  });
-
-  // ---------------------------------------------------------------------------
-  // Student Computations
-  // ---------------------------------------------------------------------------
-  const submittedAssignmentIds = new Set(
-    mySubmissions.map((sub) => sub.assignmentId)
+  const filteredSubmissions = safeSubmissions.filter(
+    (s) => selectedAssignmentFilter === 'ALL' || s.assignmentId === parseInt(selectedAssignmentFilter)
   );
 
-  const pendingAssignments = assignments
-    .filter((a) => !a.isDraft && !submittedAssignmentIds.has(a.id))
-    .map((a) => {
-      const tags = getAssignmentTags(a);
-      return {
-        ...a,
-        className: tags.className,
-        subjectName: tags.subjectName
-      };
-    });
-
-  const completedSubmissions = mySubmissions.map((sub) => {
-    const assignment = assignments.find((a) => a.id === sub.assignmentId);
-    return {
-      ...sub,
-      assignmentTitle: assignment ? assignment.title : `Assignment #${sub.assignmentId}`,
-      maxMarks: assignment ? assignment.maxMarks : '-'
-    };
-  });
+  const pendingAssignments = safeAssignments.filter(
+    (a) => !safeSubmissions.some((s) => s.assignmentId === a.id)
+  );
 
   // ---------------------------------------------------------------------------
-  // Unauthenticated Render (Login Screen)
+  // Unauthenticated Render (Login Page)
   // ---------------------------------------------------------------------------
   if (!token) {
     return (
-      <div className="auth-container">
-        <div className="card auth-card">
-          <h2 style={{ marginBottom: '8px' }}>Sign In</h2>
-          <p style={{ fontSize: '13px', color: 'var(--text-muted)', marginBottom: '20px' }}>
-            Enter your credentials to access the portal
-          </p>
-          <form onSubmit={handleLogin}>
-            <div className="form-group">
-              <label>Email Address</label>
+      <div style={{ display: 'flex', justifyContent: 'center', alignItems: 'center', minHeight: '100vh', background: 'var(--bg-main)' }}>
+        <div className="card" style={{ width: '100%', maxWidth: '400px' }}>
+          <h2 style={{ fontSize: '20px', fontWeight: 'bold', marginBottom: '16px', textAlign: 'center' }}>
+            School Portal Login
+          </h2>
+          {loginError && <p style={{ color: '#dc2626', fontSize: '14px', marginBottom: '12px' }}>{loginError}</p>}
+          <form onSubmit={handleLogin} style={{ display: 'flex', flexDirection: 'column', gap: '12px' }}>
+            <div>
+              <label style={{ fontSize: '14px', fontWeight: '500' }}>Email Address</label>
               <input
                 type="email"
-                value={email}
-                onChange={(e) => setEmail(e.target.value)}
+                value={loginEmail}
+                onChange={(e) => setLoginEmail(e.target.value)}
                 required
-                placeholder="name@school.com"
+                style={{ width: '100%', padding: '8px', border: '1px solid var(--border)', borderRadius: '4px', marginTop: '4px' }}
               />
             </div>
-            <div className="form-group">
-              <label>Password</label>
+            <div>
+              <label style={{ fontSize: '14px', fontWeight: '500' }}>Password</label>
               <input
                 type="password"
-                value={password}
-                onChange={(e) => setPassword(e.target.value)}
+                value={loginPassword}
+                onChange={(e) => setLoginPassword(e.target.value)}
                 required
-                placeholder="••••••••"
+                style={{ width: '100%', padding: '8px', border: '1px solid var(--border)', borderRadius: '4px', marginTop: '4px' }}
               />
             </div>
-            <button type="submit" className="btn btn-primary" style={{ width: '100%', marginTop: '10px' }}>
+            <button type="submit" className="btn btn-primary" style={{ marginTop: '8px' }}>
               Sign In
             </button>
           </form>
-
-          <div
-            style={{
-              marginTop: '24px',
-              paddingTop: '16px',
-              borderTop: '1px solid var(--border)',
-              fontSize: '12px',
-              color: 'var(--text-muted)'
-            }}
-          >
-            <strong>Demo Logins:</strong>
-            <br />
-            Admin: <code>admin@school.com</code> / <code>AdminPassword123!</code>
-            <br />
-            Teacher: <code>teacher@school.com</code> / <code>TeacherPassword123!</code>
-            <br />
-            Student: <code>student@school.com</code> / <code>StudentPassword123!</code>
-          </div>
         </div>
       </div>
     );
@@ -676,7 +616,7 @@ function App() {
                     style={{ padding: '8px', border: '1px solid var(--border)', borderRadius: '4px' }}
                   >
                     <option value="">Select Enrolled Class</option>
-                    {classList.map((c) => (
+                    {safeClassList.map((c) => (
                       <option key={c.id} value={c.id}>{c.name} - Section {c.section}</option>
                     ))}
                   </select>
@@ -708,15 +648,15 @@ function App() {
                   </tr>
                 </thead>
                 <tbody>
-                  {usersList.length === 0 ? (
+                  {safeUsersList.length === 0 ? (
                     <tr>
                       <td colSpan="5" style={{ textAlign: 'center', color: 'var(--text-muted)' }}>
                         No users found.
                       </td>
                     </tr>
                   ) : (
-                    usersList.map((u) => {
-                      const userClass = classList.find((c) => c.id === u.classId);
+                    safeUsersList.map((u) => {
+                      const userClass = safeClassList.find((c) => c.id === u.classId);
                       return (
                         <tr key={u.id}>
                           <td>#{u.id}</td>
@@ -770,10 +710,10 @@ function App() {
                   </button>
                 </form>
                 <ul style={{ listStyle: 'none', padding: 0, margin: 0 }}>
-                  {classList.length === 0 ? (
+                  {safeClassList.length === 0 ? (
                     <li style={{ color: 'var(--text-muted)', fontSize: '14px' }}>No classes created yet.</li>
                   ) : (
-                    classList.map((c) => (
+                    safeClassList.map((c) => (
                       <li key={c.id} style={{ padding: '8px 0', borderBottom: '1px solid var(--border)', display: 'flex', justifyContent: 'space-between', fontSize: '14px' }}>
                         <span><strong>{c.name}</strong> - Section {c.section}</span>
                       </li>
@@ -807,10 +747,10 @@ function App() {
                   </button>
                 </form>
                 <ul style={{ listStyle: 'none', padding: 0, margin: 0 }}>
-                  {subjectList.length === 0 ? (
+                  {safeSubjectList.length === 0 ? (
                     <li style={{ color: 'var(--text-muted)', fontSize: '14px' }}>No subjects created yet.</li>
                   ) : (
-                    subjectList.map((s) => (
+                    safeSubjectList.map((s) => (
                       <li key={s.id} style={{ padding: '8px 0', borderBottom: '1px solid var(--border)', display: 'flex', justifyContent: 'space-between', fontSize: '14px' }}>
                         <span><strong>{s.name}</strong> ({s.code})</span>
                       </li>
@@ -833,7 +773,7 @@ function App() {
                     required
                   >
                     <option value="">Select Teacher</option>
-                    {usersList.filter((u) => u.role === 'Teacher').map((t) => (
+                    {safeUsersList.filter((u) => u.role === 'Teacher').map((t) => (
                       <option key={t.id} value={t.email}>{t.email}</option>
                     ))}
                   </select>
@@ -846,7 +786,7 @@ function App() {
                       required
                     >
                       <option value="">Select Class</option>
-                      {classList.map((c) => (
+                      {safeClassList.map((c) => (
                         <option key={c.id} value={c.id}>{c.name} - {c.section}</option>
                       ))}
                     </select>
@@ -858,7 +798,7 @@ function App() {
                       required
                     >
                       <option value="">Select Subject</option>
-                      {subjectList.map((s) => (
+                      {safeSubjectList.map((s) => (
                         <option key={s.id} value={s.id}>{s.name}</option>
                       ))}
                     </select>
@@ -870,10 +810,10 @@ function App() {
                 </form>
 
                 <div style={{ display: 'flex', flexDirection: 'column', gap: '8px' }}>
-                  {allocations.length === 0 ? (
+                  {safeAllocations.length === 0 ? (
                     <p style={{ color: 'var(--text-muted)', fontSize: '14px' }}>No allocations created yet.</p>
                   ) : (
-                    allocations.map((a) => (
+                    safeAllocations.map((a) => (
                       <div key={a.id} style={{ padding: '8px 0', borderBottom: '1px solid var(--border)' }}>
                         <p style={{ fontWeight: '600', fontSize: '14px' }}>{a.teacherEmail}</p>
                         <p style={{ fontSize: '12px', color: 'var(--text-muted)' }}>{a.className} • {a.subjectName}</p>
@@ -973,7 +913,7 @@ function App() {
                   style={{ padding: '8px 12px', border: '1px solid var(--border)', borderRadius: '6px', fontSize: '14px' }}
                 >
                   <option value="">Select Target Class (Optional)</option>
-                  {classList.map((c) => (
+                  {safeClassList.map((c) => (
                     <option key={c.id} value={c.id}>
                       {c.name} - Section {c.section}
                     </option>
@@ -986,7 +926,7 @@ function App() {
                   style={{ padding: '8px 12px', border: '1px solid var(--border)', borderRadius: '6px', fontSize: '14px' }}
                 >
                   <option value="">Select Subject (Optional)</option>
-                  {subjectList.map((s) => (
+                  {safeSubjectList.map((s) => (
                     <option key={s.id} value={s.id}>
                       {s.name} ({s.code})
                     </option>
@@ -1062,7 +1002,7 @@ function App() {
                   onChange={(e) => setSelectedAssignmentFilter(e.target.value)}
                 >
                   <option value="ALL">All Assignments</option>
-                  {assignments.map((a) => (
+                  {safeAssignments.map((a) => (
                     <option key={a.id} value={a.id}>
                       {a.title}
                     </option>
@@ -1119,10 +1059,10 @@ function App() {
           <div className="card" style={{ marginBottom: '24px' }}>
             <h3>Active Assignments</h3>
             <div style={{ display: 'grid', gap: '16px', marginTop: '16px' }}>
-              {assignments.length === 0 ? (
+              {safeAssignments.length === 0 ? (
                 <p style={{ color: 'var(--text-muted)', fontSize: '14px' }}>No active assignments available.</p>
               ) : (
-                assignments.map((a) => {
+                safeAssignments.map((a) => {
                   const tags = getAssignmentTags(a);
                   return (
                     <div
@@ -1189,7 +1129,7 @@ function App() {
           </div>
         )}
 
-        {/* STUDENT VIEW: 2-SEGMENT DASHBOARD (ENHANCED) */}
+        {/* STUDENT VIEW: 2-SEGMENT DASHBOARD */}
         {role === 'Student' && (
           <div style={{ display: 'flex', flexDirection: 'column', gap: '24px' }}>
             {/* Segment 1: Pending Class Assignments */}
@@ -1206,6 +1146,7 @@ function App() {
                 <div style={{ display: 'flex', flexDirection: 'column', gap: '16px' }}>
                   {pendingAssignments.map((assignment) => {
                     const isOverdue = assignment.dueDate && new Date() > new Date(assignment.dueDate);
+                    const tags = getAssignmentTags(assignment);
                     return (
                       <div
                         key={assignment.id}
@@ -1220,12 +1161,16 @@ function App() {
                           <div>
                             <h3 style={{ fontSize: '16px', fontWeight: '600' }}>{assignment.title}</h3>
                             <div style={{ display: 'flex', gap: '8px', margin: '4px 0' }}>
-                              <span className="badge" style={{ background: '#e0e7ff', color: '#3730a3', fontWeight: '600', padding: '2px 8px', fontSize: '12px', borderRadius: '4px' }}>
-                                📚 {assignment.className}
-                              </span>
-                              <span className="badge" style={{ background: '#d1fae5', color: '#065f46', fontWeight: '600', padding: '2px 8px', fontSize: '12px', borderRadius: '4px' }}>
-                                📖 {assignment.subjectName}
-                              </span>
+                              {tags.className && (
+                                <span className="badge" style={{ background: '#e0e7ff', color: '#3730a3', fontWeight: '600', padding: '2px 8px', fontSize: '12px', borderRadius: '4px' }}>
+                                  📚 {tags.className}
+                                </span>
+                              )}
+                              {tags.subjectName && (
+                                <span className="badge" style={{ background: '#d1fae5', color: '#065f46', fontWeight: '600', padding: '2px 8px', fontSize: '12px', borderRadius: '4px' }}>
+                                  📖 {tags.subjectName}
+                                </span>
+                              )}
                             </div>
                           </div>
                           <span className="badge" style={{ background: '#e2e8f0' }}>
@@ -1259,70 +1204,81 @@ function App() {
               )}
             </div>
 
-            {/* Segment 2: Completed & Resubmission Support */}
+            {/* Segment 2: My Submissions & Grades */}
             <div className="card">
-              <h2 style={{ fontSize: '18px', fontWeight: 'bold', marginBottom: '16px', display: 'flex', alignItems: 'center', gap: '8px' }}>
-                <span>✅</span> Completed & Submitted
+              <h2 style={{ fontSize: '18px', fontWeight: 'bold', marginBottom: '16px' }}>
+                📋 My Submissions & Grades
               </h2>
-
-              {completedSubmissions.length === 0 ? (
-                <p style={{ color: 'var(--text-muted)', fontSize: '14px', textAlign: 'center', padding: '16px 0' }}>
-                  No completed assignments yet.
-                </p>
-              ) : (
-                <table className="table">
-                  <thead>
+              <table className="table">
+                <thead>
+                  <tr>
+                    <th>Assignment ID</th>
+                    <th>Answer</th>
+                    <th>Submitted At</th>
+                    <th>Status</th>
+                    <th>Marks</th>
+                    <th>Feedback</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {safeSubmissions.length === 0 ? (
                     <tr>
-                      <th>Assignment</th>
-                      <th>Your Answer</th>
-                      <th>Submitted At</th>
-                      <th>Status</th>
-                      <th>Marks</th>
-                      <th>Feedback</th>
-                      <th>Action</th>
+                      <td colSpan="6" style={{ textAlign: 'center', color: 'var(--text-muted)' }}>
+                        You have not submitted any assignments yet.
+                      </td>
                     </tr>
-                  </thead>
-                  <tbody>
-                    {completedSubmissions.map((sub) => (
-                      <tr key={sub.id}>
-                        <td style={{ fontWeight: '600' }}>{sub.assignmentTitle}</td>
-                        <td style={{ color: 'var(--text-muted)', maxWidth: '200px', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
-                          {sub.answerText}
-                        </td>
-                        <td style={{ fontSize: '12px', color: 'var(--text-muted)' }}>
-                          {sub.submittedAt ? new Date(sub.submittedAt).toLocaleString() : '--'}
-                        </td>
+                  ) : (
+                    safeSubmissions.map((s) => (
+                      <tr key={s.id}>
+                        <td>#{s.assignmentId}</td>
+                        <td>{s.answerText}</td>
+                        <td>{s.submittedAt ? new Date(s.submittedAt).toLocaleString() : '--'}</td>
                         <td>
-                          <span className={`badge badge-${sub.status}`}>{sub.status}</span>
+                          <span className={`badge badge-${s.status}`}>{s.status}</span>
                         </td>
-                        <td style={{ fontWeight: '500' }}>
-                          {sub.marks !== null && sub.marks !== undefined
-                            ? `${sub.marks} / ${sub.maxMarks}`
-                            : '--'}
-                        </td>
-                        <td style={{ fontStyle: 'italic', color: 'var(--text-muted)' }}>
-                          {sub.feedback || 'Pending review...'}
-                        </td>
-                        <td>
-                          <button
-                            onClick={() => handleOpenSubmitModal(sub.assignmentId)}
-                            className="btn btn-sm"
-                            style={{ background: '#e2e8f0', color: '#1e293b', fontSize: '12px' }}
-                          >
-                            Update / Resubmit
-                          </button>
-                        </td>
+                        <td>{s.marks !== null && s.marks !== undefined ? `${s.marks} marks` : 'Unassigned'}</td>
+                        <td>{s.feedback || 'No feedback'}</td>
                       </tr>
-                    ))}
-                  </tbody>
-                </table>
-              )}
+                    ))
+                  )}
+                </tbody>
+              </table>
             </div>
           </div>
         )}
       </main>
+
+      {/* STUDENT SUBMISSION MODAL */}
+      {submitModal.open && (
+        <div style={{ position: 'fixed', top: 0, left: 0, right: 0, bottom: 0, background: 'rgba(0,0,0,0.5)', display: 'flex', justifyContent: 'center', alignItems: 'center', zIndex: 1000 }}>
+          <div className="card" style={{ width: '100%', maxWidth: '500px', background: '#fff' }}>
+            <h3 style={{ fontSize: '18px', fontWeight: 'bold', marginBottom: '12px' }}>Submit Assignment Answer</h3>
+            <form onSubmit={handleSubmitAssignment}>
+              <textarea
+                placeholder="Type your complete answer here..."
+                rows={5}
+                required
+                value={submitModal.answerText}
+                onChange={(e) => setSubmitModal({ ...submitModal, answerText: e.target.value })}
+                style={{ width: '100%', padding: '10px', border: '1px solid var(--border)', borderRadius: '6px', fontSize: '14px', marginBottom: '16px' }}
+              />
+              <div style={{ display: 'flex', justifyContent: 'flex-end', gap: '8px' }}>
+                <button
+                  type="button"
+                  onClick={() => setSubmitModal({ open: false, assignmentId: null, answerText: '' })}
+                  className="btn btn-sm"
+                  style={{ background: '#e2e8f0', color: '#334155' }}
+                >
+                  Cancel
+                </button>
+                <button type="submit" className="btn btn-primary btn-sm">
+                  Submit Now
+                </button>
+              </div>
+            </form>
+          </div>
+        </div>
+      )}
     </div>
   );
 }
-
-export default App;
