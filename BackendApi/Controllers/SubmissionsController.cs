@@ -1,3 +1,4 @@
+using System.Security.Claims;
 using BackendApi.Data;
 using BackendApi.Models;
 using Microsoft.AspNetCore.Authorization;
@@ -20,10 +21,20 @@ public class SubmissionsController : ControllerBase
 
     [HttpPost]
     [Authorize(Roles = "Student")]
-    public async Task<IActionResult> SubmitAssignment([FromBody] Submission sub)
+    public async Task<IActionResult> SubmitAssignment([FromBody] CreateSubmissionDto dto)
     {
-        sub.StudentEmail = User.Identity?.Name ?? sub.StudentEmail;
-        sub.Status = "Submitted";
+        var email = User.FindFirst(ClaimTypes.Email)?.Value 
+                 ?? User.FindFirst(ClaimTypes.Name)?.Value 
+                 ?? User.Identity?.Name;
+
+        var sub = new Submission
+        {
+            AssignmentId = dto.AssignmentId,
+            AnswerText = dto.AnswerText,
+            StudentEmail = !string.IsNullOrEmpty(email) ? email : "student@school.com",
+            Status = "Submitted"
+        };
+
         _db.Submissions.Add(sub);
         await _db.SaveChangesAsync();
         return Ok(sub);
@@ -33,8 +44,14 @@ public class SubmissionsController : ControllerBase
     [Authorize(Roles = "Student")]
     public async Task<IActionResult> GetMySubmissions()
     {
-        var email = User.Identity?.Name;
-        var list = await _db.Submissions.Where(s => s.StudentEmail == email).ToListAsync();
+        var email = User.FindFirst(ClaimTypes.Email)?.Value 
+                 ?? User.FindFirst(ClaimTypes.Name)?.Value 
+                 ?? User.Identity?.Name;
+
+        var list = await _db.Submissions
+            .Where(s => s.StudentEmail == email)
+            .ToListAsync();
+
         return Ok(list);
     }
 
@@ -46,7 +63,7 @@ public class SubmissionsController : ControllerBase
     }
 
     [HttpPut("{id}/grade")]
-    [Authorize(Roles = "Teacher")]
+    [Authorize(Roles = "Teacher,Admin")]
     public async Task<IActionResult> GradeSubmission(int id, [FromBody] GradeDto grade)
     {
         var sub = await _db.Submissions.FindAsync(id);
@@ -55,9 +72,11 @@ public class SubmissionsController : ControllerBase
         sub.Marks = grade.Marks;
         sub.Feedback = grade.Feedback;
         sub.Status = "Graded";
+
         await _db.SaveChangesAsync();
         return Ok(sub);
     }
 }
 
+public record CreateSubmissionDto(int AssignmentId, string AnswerText);
 public record GradeDto(int Marks, string Feedback);
