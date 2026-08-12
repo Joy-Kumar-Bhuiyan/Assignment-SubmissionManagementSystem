@@ -6,13 +6,11 @@ function App() {
   const [email, setEmail] = useState(localStorage.getItem('email') || '');
   const [password, setPassword] = useState('');
 
-  // Data States
   const [assignments, setAssignments] = useState([]);
   const [submissions, setSubmissions] = useState([]);
   const [mySubmissions, setMySubmissions] = useState([]);
   const [users, setUsers] = useState([]);
 
-  // Form States
   const [title, setTitle] = useState('');
   const [description, setDescription] = useState('');
   const [maxMarks, setMaxMarks] = useState(100);
@@ -47,32 +45,23 @@ function App() {
 
   const fetchData = async () => {
     if (!token) return;
+    const authHeaders = { 'Authorization': `Bearer ${token}` };
 
-    // Fetch Assignments
-    const assignRes = await fetch('http://localhost:5000/api/assignments', {
-      headers: { 'Authorization': `Bearer ${token}` }
-    });
+    const assignRes = await fetch('http://localhost:5000/api/assignments', { headers: authHeaders });
     if (assignRes.ok) setAssignments(await assignRes.json());
 
-    // Role-Specific Data Fetching
     if (role === 'Teacher' || role === 'Admin') {
-      const subRes = await fetch('http://localhost:5000/api/submissions', {
-        headers: { 'Authorization': `Bearer ${token}` }
-      });
+      const subRes = await fetch('http://localhost:5000/api/submissions', { headers: authHeaders });
       if (subRes.ok) setSubmissions(await subRes.json());
     }
 
     if (role === 'Student') {
-      const mySubRes = await fetch('http://localhost:5000/api/submissions/my', {
-        headers: { 'Authorization': `Bearer ${token}` }
-      });
+      const mySubRes = await fetch('http://localhost:5000/api/submissions/my', { headers: authHeaders });
       if (mySubRes.ok) setMySubmissions(await mySubRes.json());
     }
 
     if (role === 'Admin') {
-      const userRes = await fetch('http://localhost:5000/api/admin/users', {
-        headers: { 'Authorization': `Bearer ${token}` }
-      });
+      const userRes = await fetch('http://localhost:5000/api/admin/users', { headers: authHeaders });
       if (userRes.ok) setUsers(await userRes.json());
     }
   };
@@ -97,7 +86,7 @@ function App() {
   };
 
   const handleSubmitAnswer = async (assignmentId) => {
-    const answer = prompt("Enter your assignment submission text:");
+    const answer = prompt("Enter your submission text:");
     if (!answer) return;
 
     await fetch('http://localhost:5000/api/submissions', {
@@ -131,63 +120,107 @@ function App() {
 
   if (!token) {
     return (
-      <div style={{ maxWidth: '400px', margin: '50px auto', fontFamily: 'Arial', padding: '20px', border: '1px solid #ccc', borderRadius: '8px' }}>
-        <h2>School System Login</h2>
-        <p style={{ fontSize: '12px', color: '#666' }}>
-          <strong>Demo Logins:</strong><br/>
-          Admin: admin@school.com / AdminPassword123!<br/>
-          Teacher: teacher@school.com / TeacherPassword123!<br/>
-          Student: student@school.com / StudentPassword123!
-        </p>
-        <form onSubmit={handleLogin}>
-          <div style={{ marginBottom: '10px' }}>
-            <label>Email:</label><br/>
-            <input type="email" value={email} onChange={e => setEmail(e.target.value)} required style={{ width: '100%', padding: '8px' }} />
+      <div className="auth-container">
+        <div className="card auth-card">
+          <h2 style={{ marginBottom: '8px' }}>Sign In</h2>
+          <p style={{ fontSize: '13px', color: 'var(--text-muted)', marginBottom: '20px' }}>
+            Enter your credentials to access the portal
+          </p>
+          <form onSubmit={handleLogin}>
+            <div className="form-group">
+              <label>Email Address</label>
+              <input type="email" value={email} onChange={e => setEmail(e.target.value)} required placeholder="name@school.com" />
+            </div>
+            <div className="form-group">
+              <label>Password</label>
+              <input type="password" value={password} onChange={e => setPassword(e.target.value)} required placeholder="••••••••" />
+            </div>
+            <button type="submit" className="btn btn-primary" style={{ width: '100%', marginTop: '10px' }}>
+              Sign In
+            </button>
+          </form>
+
+          <div style={{ marginTop: '24px', paddingTop: '16px', borderTop: '1px solid var(--border)', fontSize: '12px', color: 'var(--text-muted)' }}>
+            <strong>Demo Logins:</strong><br/>
+            Admin: <code>admin@school.com</code> / <code>AdminPassword123!</code><br/>
+            Teacher: <code>teacher@school.com</code> / <code>TeacherPassword123!</code><br/>
+            Student: <code>student@school.com</code> / <code>StudentPassword123!</code>
           </div>
-          <div style={{ marginBottom: '15px' }}>
-            <label>Password:</label><br/>
-            <input type="password" value={password} onChange={e => setPassword(e.target.value)} required style={{ width: '100%', padding: '8px' }} />
-          </div>
-          <button type="submit" style={{ width: '100%', padding: '10px', backgroundColor: '#007bff', color: 'white', border: 'none', borderRadius: '4px', cursor: 'pointer' }}>Login</button>
-        </form>
+        </div>
       </div>
     );
   }
 
   return (
-    <div style={{ maxWidth: '900px', margin: '20px auto', fontFamily: 'Arial', padding: '20px' }}>
-      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', borderBottom: '2px solid #ddd', paddingBottom: '10px' }}>
+    <div>
+      <nav className="navbar">
         <div>
-          <h2>Management Portal</h2>
-          <span>Logged in as: <strong>{email}</strong> ({role})</span>
+          <h3 style={{ fontSize: '18px' }}>School Portal</h3>
         </div>
-        <button onClick={handleLogout} style={{ padding: '8px 16px', backgroundColor: '#dc3545', color: 'white', border: 'none', borderRadius: '4px', cursor: 'pointer' }}>Logout</button>
-      </div>
-
-      {/* ADMIN VIEW */}
-      {role === 'Admin' && (
-        <div style={{ marginTop: '20px', background: '#f8f9fa', padding: '15px', borderRadius: '5px' }}>
-          <h3>Admin Panel: User Accounts</h3>
-          <ul>
-            {users.map(u => <li key={u.id}>{u.email} - <strong>{u.role}</strong></li>)}
-          </ul>
+        <div style={{ display: 'flex', alignItems: 'center', gap: '16px' }}>
+          <span style={{ fontSize: '14px', color: 'var(--text-muted)' }}>
+            {email} <span className={`badge badge-${role}`}>{role}</span>
+          </span>
+          <button onClick={handleLogout} className="btn btn-danger btn-sm">Logout</button>
         </div>
-      )}
+      </nav>
 
-      {/* TEACHER VIEW */}
-      {role === 'Teacher' && (
-        <div style={{ marginTop: '20px' }}>
-          <form onSubmit={handleCreateAssignment} style={{ background: '#f8f9fa', padding: '15px', borderRadius: '5px', marginBottom: '20px' }}>
-            <h3>Create New Assignment</h3>
-            <input type="text" placeholder="Title" value={title} onChange={e => setTitle(e.target.value)} required style={{ padding: '8px', marginRight: '10px' }} />
-            <input type="text" placeholder="Description" value={description} onChange={e => setDescription(e.target.value)} required style={{ padding: '8px', marginRight: '10px' }} />
-            <input type="number" placeholder="Max Marks" value={maxMarks} onChange={e => setMaxMarks(e.target.value)} required style={{ padding: '8px', marginRight: '10px', width: '80px' }} />
-            <button type="submit" style={{ padding: '8px 16px', backgroundColor: '#28a745', color: 'white', border: 'none', cursor: 'pointer' }}>Publish</button>
-          </form>
+      <main className="app-container">
+        {/* ADMIN VIEW */}
+        {role === 'Admin' && (
+          <div className="card">
+            <h3>User Management</h3>
+            <p style={{ fontSize: '13px', color: 'var(--text-muted)', marginBottom: '16px' }}>Registered accounts across the institution</p>
+            <table className="table">
+              <thead>
+                <tr>
+                  <th>ID</th>
+                  <th>Email</th>
+                  <th>Role</th>
+                </tr>
+              </thead>
+              <tbody>
+                {users.map(u => (
+                  <tr key={u.id}>
+                    <td>#{u.id}</td>
+                    <td>{u.email}</td>
+                    <td><span className={`badge badge-${u.role}`}>{u.role}</span></td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        )}
 
-          <h3>Student Submissions to Grade</h3>
-          {submissions.length === 0 ? <p>No submissions yet.</p> : (
-            <table border="1" cellPadding="10" style={{ width: '100%', borderCollapse: 'collapse' }}>
+        {/* TEACHER CREATE ASSIGNMENT */}
+        {role === 'Teacher' && (
+          <div className="card">
+            <h3>Publish New Assignment</h3>
+            <form onSubmit={handleCreateAssignment} style={{ marginTop: '16px' }}>
+              <div className="grid-2">
+                <div className="form-group">
+                  <label>Title</label>
+                  <input type="text" value={title} onChange={e => setTitle(e.target.value)} required placeholder="e.g. Midterm Essay" />
+                </div>
+                <div className="form-group">
+                  <label>Max Marks</label>
+                  <input type="number" value={maxMarks} onChange={e => setMaxMarks(e.target.value)} required />
+                </div>
+              </div>
+              <div className="form-group">
+                <label>Instructions & Description</label>
+                <input type="text" value={description} onChange={e => setDescription(e.target.value)} required placeholder="Provide clear submission details..." />
+              </div>
+              <button type="submit" className="btn btn-primary">Publish Assignment</button>
+            </form>
+          </div>
+        )}
+
+        {/* TEACHER SUBMISSION GRADING */}
+        {(role === 'Teacher' || role === 'Admin') && (
+          <div className="card">
+            <h3>Submissions Queue</h3>
+            <table className="table">
               <thead>
                 <tr>
                   <th>Student</th>
@@ -195,56 +228,85 @@ function App() {
                   <th>Status</th>
                   <th>Marks</th>
                   <th>Feedback</th>
-                  <th>Action</th>
+                  {role === 'Teacher' && <th>Action</th>}
                 </tr>
               </thead>
               <tbody>
-                {submissions.map(s => (
+                {submissions.length === 0 ? (
+                  <tr><td colSpan="6" style={{ textAlign: 'center', color: 'var(--text-muted)' }}>No submissions found.</td></tr>
+                ) : submissions.map(s => (
                   <tr key={s.id}>
                     <td>{s.studentEmail}</td>
                     <td>{s.answerText}</td>
-                    <td>{s.status}</td>
-                    <td>{s.marks ?? 'N/A'}</td>
-                    <td>{s.feedback ?? 'N/A'}</td>
-                    <td>
-                      <button onClick={() => handleGradeSubmission(s.id)}>Grade</button>
-                    </td>
+                    <td><span className={`badge badge-${s.status}`}>{s.status}</span></td>
+                    <td>{s.marks !== null ? `${s.marks} marks` : 'Unassigned'}</td>
+                    <td>{s.feedback || 'No feedback'}</td>
+                    {role === 'Teacher' && (
+                      <td>
+                        <button onClick={() => handleGradeSubmission(s.id)} className="btn btn-primary btn-sm">Grade</button>
+                      </td>
+                    )}
                   </tr>
                 ))}
               </tbody>
             </table>
-          )}
-        </div>
-      )}
+          </div>
+        )}
 
-      {/* ASSIGNMENTS VIEW */}
-      <h3 style={{ marginTop: '30px' }}>Assignments</h3>
-      {assignments.map(a => (
-        <div key={a.id} style={{ border: '1px solid #ddd', padding: '15px', marginBottom: '10px', borderRadius: '5px' }}>
-          <h4>{a.title} (Max Marks: {a.maxMarks})</h4>
-          <p>{a.description}</p>
-          {role === 'Student' && (
-            <button onClick={() => handleSubmitAnswer(a.id)} style={{ padding: '6px 12px', backgroundColor: '#007bff', color: 'white', border: 'none', cursor: 'pointer' }}>Submit Answer</button>
-          )}
+        {/* ASSIGNMENTS LIST */}
+        <div className="card">
+          <h3>Active Assignments</h3>
+          <div style={{ display: 'grid', gap: '16px', marginTop: '16px' }}>
+            {assignments.length === 0 ? (
+              <p style={{ color: 'var(--text-muted)', fontSize: '14px' }}>No active assignments available.</p>
+            ) : assignments.map(a => (
+              <div key={a.id} style={{ border: '1px solid var(--border)', borderRadius: '8px', padding: '16px', background: 'var(--bg-main)' }}>
+                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start' }}>
+                  <div>
+                    <h4 style={{ fontSize: '16px' }}>{a.title}</h4>
+                    <p style={{ fontSize: '14px', color: 'var(--text-muted)', marginTop: '4px' }}>{a.description}</p>
+                  </div>
+                  <span className="badge" style={{ background: '#e2e8f0' }}>Max Marks: {a.maxMarks}</span>
+                </div>
+                {role === 'Student' && (
+                  <button onClick={() => handleSubmitAnswer(a.id)} className="btn btn-primary btn-sm" style={{ marginTop: '12px' }}>
+                    Submit Answer
+                  </button>
+                )}
+              </div>
+            ))}
+          </div>
         </div>
-      ))}
 
-      {/* STUDENT SUBMISSION STATUS */}
-      {role === 'Student' && (
-        <div style={{ marginTop: '30px' }}>
-          <h3>My Submission Status & Feedback</h3>
-          {mySubmissions.length === 0 ? <p>You have not submitted any assignments.</p> : (
-            <ul>
-              {mySubmissions.map(s => (
-                <li key={s.id} style={{ marginBottom: '10px' }}>
-                  Submission ID #{s.id} - <strong>Status: {s.status}</strong><br/>
-                  Marks: {s.marks ?? 'Pending'} | Feedback: {s.feedback ?? 'None'}
-                </li>
-              ))}
-            </ul>
-          )}
-        </div>
-      )}
+        {/* STUDENT SUBMISSION HISTORY */}
+        {role === 'Student' && (
+          <div className="card">
+            <h3>My Submissions & Results</h3>
+            <table className="table">
+              <thead>
+                <tr>
+                  <th>Assignment ID</th>
+                  <th>Status</th>
+                  <th>Grade</th>
+                  <th>Teacher Feedback</th>
+                </tr>
+              </thead>
+              <tbody>
+                {mySubmissions.length === 0 ? (
+                  <tr><td colSpan="4" style={{ textAlign: 'center', color: 'var(--text-muted)' }}>You have not submitted any assignments yet.</td></tr>
+                ) : mySubmissions.map(s => (
+                  <tr key={s.id}>
+                    <td>Assignment #{s.assignmentId}</td>
+                    <td><span className={`badge badge-${s.status}`}>{s.status}</span></td>
+                    <td>{s.marks !== null ? `${s.marks} pts` : 'Pending'}</td>
+                    <td>{s.feedback || 'Awaiting teacher feedback...'}</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        )}
+      </main>
     </div>
   );
 }
