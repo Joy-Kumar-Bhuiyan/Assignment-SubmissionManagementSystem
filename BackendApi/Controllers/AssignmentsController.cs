@@ -19,17 +19,44 @@ public class AssignmentsController : ControllerBase
     }
 
     [HttpGet]
-    public async Task<IActionResult> GetAssignments()
+    public async Task<IActionResult> GetAllAssignments()
     {
-        return Ok(await _db.Assignments.ToListAsync());
+        var list = await _db.Assignments
+            .Include(a => a.Class)
+            .Include(a => a.Subject)
+            .Select(a => new
+            {
+                a.Id,
+                a.Title,
+                a.Description,
+                a.MaxMarks,
+                a.CreatedDate,
+                a.ClassId,
+                ClassName = a.Class != null ? $"{a.Class.Name} ({a.Class.Section})" : "General",
+                a.SubjectId,
+                SubjectName = a.Subject != null ? a.Subject.Name : "General"
+            })
+            .ToListAsync();
+
+        return Ok(list);
     }
 
     [HttpPost]
-    [Authorize(Roles = "Teacher")]
-    public async Task<IActionResult> CreateAssignment([FromBody] Assignment assignment)
+    [Authorize(Roles = "Teacher,Admin")]
+    public async Task<IActionResult> CreateAssignment([FromBody] CreateAssignmentDto dto)
     {
+        var assignment = new Assignment
+        {
+            Title = dto.Title,
+            Description = dto.Description,
+            MaxMarks = dto.MaxMarks,
+            ClassId = dto.ClassId,
+            SubjectId = dto.SubjectId
+        };
+
         _db.Assignments.Add(assignment);
         await _db.SaveChangesAsync();
+
         return Ok(assignment);
     }
 
@@ -38,18 +65,22 @@ public class AssignmentsController : ControllerBase
     public async Task<IActionResult> DeleteAssignment(int id)
     {
         var assignment = await _db.Assignments.FindAsync(id);
-        if (assignment == null)
-        {
-            return NotFound();
-        }
+        if (assignment == null) return NotFound();
 
-        // Delete any submissions linked to this assignment first
         var relatedSubmissions = _db.Submissions.Where(s => s.AssignmentId == id);
         _db.Submissions.RemoveRange(relatedSubmissions);
 
         _db.Assignments.Remove(assignment);
         await _db.SaveChangesAsync();
 
-        return Ok(new { message = "Assignment deleted successfully" });
+        return Ok(new { message = "Assignment deleted" });
     }
 }
+
+public record CreateAssignmentDto(
+    string Title, 
+    string Description, 
+    int MaxMarks, 
+    int? ClassId, 
+    int? SubjectId
+);

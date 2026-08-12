@@ -1,19 +1,17 @@
-using System.ComponentModel.DataAnnotations;
-
 namespace BackendApi.Models;
 
 public class Assignment
 {
     public int Id { get; set; }
-
-    [Required, MaxLength(200)]
     public string Title { get; set; } = string.Empty;
-
-    [Required, MaxLength(2000)]
     public string Description { get; set; } = string.Empty;
+    public int MaxMarks { get; set; }
+    public DateTime CreatedDate { get; set; } = DateTime.UtcNow;
 
-    [Range(1, 1000)]
-    public int MaxMarks { get; set; } = 100;
+    // Academic Structure Links (Nullable for backward compatibility)
+    public int? ClassId { get; set; }
+    public ClassEntity? Class { get; set; }
 
-    public DateTime CreatedAt { get; set; } = DateTime.UtcNow;
+    public int? SubjectId { get; set; }
+    public Subject? Subject { get; set; }
 }

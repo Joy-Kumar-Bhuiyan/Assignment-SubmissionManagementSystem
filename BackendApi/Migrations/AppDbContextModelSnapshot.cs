@@ -30,25 +30,75 @@ namespace BackendApi.Migrations
 
                     NpgsqlPropertyBuilderExtensions.UseIdentityByDefaultColumn(b.Property<int>("Id"));
 
-                    b.Property<DateTime>("CreatedAt")
+                    b.Property<int?>("ClassId")
+                        .HasColumnType("integer");
+
+                    b.Property<DateTime>("CreatedDate")
                         .HasColumnType("timestamp with time zone");
 
                     b.Property<string>("Description")
                         .IsRequired()
-                        .HasMaxLength(2000)
-                        .HasColumnType("character varying(2000)");
+                        .HasColumnType("text");
 
                     b.Property<int>("MaxMarks")
                         .HasColumnType("integer");
 
+                    b.Property<int?>("SubjectId")
+                        .HasColumnType("integer");
+
                     b.Property<string>("Title")
                         .IsRequired()
-                        .HasMaxLength(200)
-                        .HasColumnType("character varying(200)");
+                        .HasColumnType("text");
 
                     b.HasKey("Id");
 
+                    b.HasIndex("ClassId");
+
+                    b.HasIndex("SubjectId");
+
                     b.ToTable("Assignments");
+                });
+
+            modelBuilder.Entity("BackendApi.Models.ClassEntity", b =>
+                {
+                    b.Property<int>("Id")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("integer");
+
+                    NpgsqlPropertyBuilderExtensions.UseIdentityByDefaultColumn(b.Property<int>("Id"));
+
+                    b.Property<string>("Name")
+                        .IsRequired()
+                        .HasColumnType("text");
+
+                    b.Property<string>("Section")
+                        .IsRequired()
+                        .HasColumnType("text");
+
+                    b.HasKey("Id");
+
+                    b.ToTable("Classes");
+                });
+
+            modelBuilder.Entity("BackendApi.Models.Subject", b =>
+                {
+                    b.Property<int>("Id")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("integer");
+
+                    NpgsqlPropertyBuilderExtensions.UseIdentityByDefaultColumn(b.Property<int>("Id"));
+
+                    b.Property<string>("Code")
+                        .IsRequired()
+                        .HasColumnType("text");
+
+                    b.Property<string>("Name")
+                        .IsRequired()
+                        .HasColumnType("text");
+
+                    b.HasKey("Id");
+
+                    b.ToTable("Subjects");
                 });
 
             modelBuilder.Entity("BackendApi.Models.Submission", b =>
@@ -93,6 +143,54 @@ namespace BackendApi.Migrations
                     b.ToTable("Submissions");
                 });
 
+            modelBuilder.Entity("BackendApi.Models.SystemSetting", b =>
+                {
+                    b.Property<int>("Id")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("integer");
+
+                    NpgsqlPropertyBuilderExtensions.UseIdentityByDefaultColumn(b.Property<int>("Id"));
+
+                    b.Property<string>("Key")
+                        .IsRequired()
+                        .HasColumnType("text");
+
+                    b.Property<string>("Value")
+                        .IsRequired()
+                        .HasColumnType("text");
+
+                    b.HasKey("Id");
+
+                    b.ToTable("SystemSettings");
+                });
+
+            modelBuilder.Entity("BackendApi.Models.TeacherAllocation", b =>
+                {
+                    b.Property<int>("Id")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("integer");
+
+                    NpgsqlPropertyBuilderExtensions.UseIdentityByDefaultColumn(b.Property<int>("Id"));
+
+                    b.Property<int>("ClassId")
+                        .HasColumnType("integer");
+
+                    b.Property<int>("SubjectId")
+                        .HasColumnType("integer");
+
+                    b.Property<string>("TeacherEmail")
+                        .IsRequired()
+                        .HasColumnType("text");
+
+                    b.HasKey("Id");
+
+                    b.HasIndex("ClassId");
+
+                    b.HasIndex("SubjectId");
+
+                    b.ToTable("TeacherAllocations");
+                });
+
             modelBuilder.Entity("BackendApi.Models.User", b =>
                 {
                     b.Property<int>("Id")
@@ -120,6 +218,21 @@ namespace BackendApi.Migrations
                     b.ToTable("Users");
                 });
 
+            modelBuilder.Entity("BackendApi.Models.Assignment", b =>
+                {
+                    b.HasOne("BackendApi.Models.ClassEntity", "Class")
+                        .WithMany()
+                        .HasForeignKey("ClassId");
+
+                    b.HasOne("BackendApi.Models.Subject", "Subject")
+                        .WithMany()
+                        .HasForeignKey("SubjectId");
+
+                    b.Navigation("Class");
+
+                    b.Navigation("Subject");
+                });
+
             modelBuilder.Entity("BackendApi.Models.Submission", b =>
                 {
                     b.HasOne("BackendApi.Models.Assignment", "Assignment")
@@ -129,6 +242,25 @@ namespace BackendApi.Migrations
                         .IsRequired();
 
                     b.Navigation("Assignment");
+                });
+
+            modelBuilder.Entity("BackendApi.Models.TeacherAllocation", b =>
+                {
+                    b.HasOne("BackendApi.Models.ClassEntity", "Class")
+                        .WithMany()
+                        .HasForeignKey("ClassId")
+                        .OnDelete(DeleteBehavior.Cascade)
+                        .IsRequired();
+
+                    b.HasOne("BackendApi.Models.Subject", "Subject")
+                        .WithMany()
+                        .HasForeignKey("SubjectId")
+                        .OnDelete(DeleteBehavior.Cascade)
+                        .IsRequired();
+
+                    b.Navigation("Class");
+
+                    b.Navigation("Subject");
                 });
 #pragma warning restore 612, 618
         }
