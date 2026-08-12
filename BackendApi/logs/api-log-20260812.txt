@@ -1,0 +1,29 @@
+2026-08-12 21:02:38.521 +06:00 [INF] Executed DbCommand (20ms) [Parameters=[], CommandType='"Text"', CommandTimeout='30']
+SELECT "MigrationId", "ProductVersion"
+FROM "__EFMigrationsHistory"
+ORDER BY "MigrationId";
+2026-08-12 21:02:38.792 +06:00 [INF] Executed DbCommand (9ms) [Parameters=[], CommandType='"Text"', CommandTimeout='30']
+SELECT 1
+2026-08-12 21:02:38.861 +06:00 [INF] Executed DbCommand (7ms) [Parameters=[], CommandType='"Text"', CommandTimeout='30']
+CREATE TABLE IF NOT EXISTS "__EFMigrationsHistory" (
+    "MigrationId" character varying(150) NOT NULL,
+    "ProductVersion" character varying(32) NOT NULL,
+    CONSTRAINT "PK___EFMigrationsHistory" PRIMARY KEY ("MigrationId")
+);
+2026-08-12 21:02:38.886 +06:00 [INF] Executed DbCommand (1ms) [Parameters=[], CommandType='"Text"', CommandTimeout='30']
+LOCK TABLE "__EFMigrationsHistory" IN ACCESS EXCLUSIVE MODE
+2026-08-12 21:02:38.892 +06:00 [INF] Executed DbCommand (1ms) [Parameters=[], CommandType='"Text"', CommandTimeout='30']
+SELECT "MigrationId", "ProductVersion"
+FROM "__EFMigrationsHistory"
+ORDER BY "MigrationId";
+2026-08-12 21:02:38.898 +06:00 [INF] No migrations were applied. The database is already up to date.
+2026-08-12 21:02:39.138 +06:00 [INF] Executed DbCommand (6ms) [Parameters=[], CommandType='"Text"', CommandTimeout='30']
+SELECT EXISTS (
+    SELECT 1
+    FROM "Users" AS u)
+2026-08-12 21:02:39.172 +06:00 [INF] User profile is available. Using 'C:\Users\ASUS\AppData\Local\ASP.NET\DataProtection-Keys' as key repository and Windows DPAPI to encrypt keys at rest.
+2026-08-12 21:02:39.262 +06:00 [INF] Now listening on: http://localhost:5288
+2026-08-12 21:02:39.264 +06:00 [INF] Application started. Press Ctrl+C to shut down.
+2026-08-12 21:02:39.265 +06:00 [INF] Hosting environment: Development
+2026-08-12 21:02:39.266 +06:00 [INF] Content root path: C:\Project\SchoolSystem\BackendApi
+2026-08-12 21:40:51.922 +06:00 [INF] Application is shutting down...

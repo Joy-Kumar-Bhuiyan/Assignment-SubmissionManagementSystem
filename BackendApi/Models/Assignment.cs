@@ -7,8 +7,10 @@ public class Assignment
     public string Description { get; set; } = string.Empty;
     public int MaxMarks { get; set; }
     public DateTime CreatedDate { get; set; } = DateTime.UtcNow;
+    public DateTime? DueDate { get; set; }
+    public bool IsDraft { get; set; } = false;
 
-    // Academic Structure Links (Nullable for backward compatibility)
+    // Academic Structure Links
     public int? ClassId { get; set; }
     public ClassEntity? Class { get; set; }
 

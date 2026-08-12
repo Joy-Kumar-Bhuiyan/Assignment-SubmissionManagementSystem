@@ -27,12 +27,48 @@ public class SubmissionsController : ControllerBase
                  ?? User.FindFirst(ClaimTypes.Name)?.Value 
                  ?? User.Identity?.Name;
 
+        var assignment = await _db.Assignments.FindAsync(dto.AssignmentId);
+        if (assignment == null) return NotFound(new { message = "Assignment not found." });
+
+        if (assignment.IsDraft) return BadRequest(new { message = "Cannot submit to a draft assignment." });
+
+        // 1. Deadline & Late Check
+        bool isLate = false;
+        if (assignment.DueDate.HasValue && DateTime.UtcNow > assignment.DueDate.Value)
+        {
+            isLate = true;
+            var allowLateSetting = await _db.SystemSettings
+                .FirstOrDefaultAsync(s => s.Key == "AllowLateSubmissions");
+            bool allowLate = allowLateSetting == null || allowLateSetting.Value.ToLower() == "true";
+
+            if (!allowLate)
+            {
+                return BadRequest(new { message = "The deadline for this assignment has passed and late submissions are disabled." });
+            }
+        }
+
+        // 2. Resubmission / Update Existing Submission
+        var existingSub = await _db.Submissions
+            .FirstOrDefaultAsync(s => s.AssignmentId == dto.AssignmentId && s.StudentEmail == email);
+
+        if (existingSub != null)
+        {
+            existingSub.AnswerText = dto.AnswerText;
+            existingSub.SubmittedAt = DateTime.UtcNow;
+            existingSub.Status = isLate ? "Resubmitted (Late)" : "Resubmitted";
+
+            await _db.SaveChangesAsync();
+            return Ok(existingSub);
+        }
+
+        // 3. First-time Submission
         var sub = new Submission
         {
             AssignmentId = dto.AssignmentId,
             AnswerText = dto.AnswerText,
             StudentEmail = !string.IsNullOrEmpty(email) ? email : "student@school.com",
-            Status = "Submitted"
+            Status = isLate ? "Submitted (Late)" : "Submitted",
+            SubmittedAt = DateTime.UtcNow
         };
 
         _db.Submissions.Add(sub);
@@ -57,9 +93,25 @@ public class SubmissionsController : ControllerBase
 
     [HttpGet]
     [Authorize(Roles = "Teacher,Admin")]
-    public async Task<IActionResult> GetAllSubmissions()
+    public async Task<IActionResult> GetAllSubmissions([FromQuery] int page = 1, [FromQuery] int pageSize = 10)
     {
-        return Ok(await _db.Submissions.ToListAsync());
+        var query = _db.Submissions.AsQueryable();
+
+        var totalItems = await query.CountAsync();
+        var items = await query
+            .OrderByDescending(s => s.SubmittedAt)
+            .Skip((page - 1) * pageSize)
+            .Take(pageSize)
+            .ToListAsync();
+
+        return Ok(new
+        {
+            totalItems,
+            page,
+            pageSize,
+            totalPages = (int)Math.Ceiling(totalItems / (double)pageSize),
+            data = items
+        });
     }
 
     [HttpPut("{id}/grade")]
@@ -71,7 +123,7 @@ public class SubmissionsController : ControllerBase
 
         sub.Marks = grade.Marks;
         sub.Feedback = grade.Feedback;
-        sub.Status = "Graded";
+        sub.Status = !string.IsNullOrEmpty(grade.Status) ? grade.Status : "Graded";
 
         await _db.SaveChangesAsync();
         return Ok(sub);
@@ -79,4 +131,4 @@ public class SubmissionsController : ControllerBase
 }
 
 public record CreateSubmissionDto(int AssignmentId, string AnswerText);
-public record GradeDto(int Marks, string Feedback);
+public record GradeDto(int? Marks, string Feedback, string? Status);

@@ -14,16 +14,86 @@ function App() {
   const [assignments, setAssignments] = useState([]);
   const [submissions, setSubmissions] = useState([]);
   const [mySubmissions, setMySubmissions] = useState([]);
-  const [users, setUsers] = useState([]);
+  const [usersList, setUsersList] = useState([]);
 
-  // Form Input State (Assignment Creation)
-  const [title, setTitle] = useState('');
-  const [description, setDescription] = useState('');
-  const [maxMarks, setMaxMarks] = useState(100);
+  // Academic Management State (Classes & Subjects)
+  const [classList, setClassList] = useState([]);
+  const [subjectList, setSubjectList] = useState([]);
+  const [newClass, setNewClass] = useState({ name: '', section: '' });
+  const [newSubject, setNewSubject] = useState({ name: '', code: '' });
+
+  // Allocations & Application Settings State
+  const [allocations, setAllocations] = useState([]);
+  const [newAllocation, setNewAllocation] = useState({ teacherEmail: '', classId: '', subjectId: '' });
+  const [settings, setSettings] = useState({ AcademicYear: '2026-2027', AllowLateSubmissions: 'true' });
+
+  // Form State (Assignment Creation & Editing)
+  const [assignmentForm, setAssignmentForm] = useState({
+    id: null,
+    title: '',
+    description: '',
+    maxMarks: 100,
+    dueDate: '',
+    isDraft: false,
+    classId: '',
+    subjectId: ''
+  });
+
+  // Filter State (Submissions per assignment)
+  const [selectedAssignmentFilter, setSelectedAssignmentFilter] = useState('ALL');
+
+  // Form Input State (Admin User Creation)
+  const [newUser, setNewUser] = useState({ email: '', password: '', role: 'Student', classId: '' });
 
   // ---------------------------------------------------------------------------
   // Data Fetching
   // ---------------------------------------------------------------------------
+  const fetchUsers = useCallback(async () => {
+    if (!token || role !== 'Admin') return;
+    try {
+      const res = await fetch(`${API_BASE_URL}/api/users`, {
+        headers: { Authorization: `Bearer ${token}` }
+      });
+      if (res.ok) {
+        const data = await res.json();
+        setUsersList(data);
+      }
+    } catch (err) {
+      console.error('Error fetching users:', err);
+    }
+  }, [token, role]);
+
+  const fetchAcademicData = useCallback(async () => {
+    if (!token || (role !== 'Admin' && role !== 'Teacher')) return;
+    try {
+      const [cRes, sRes] = await Promise.all([
+        fetch(`${API_BASE_URL}/api/classes`, { headers: { Authorization: `Bearer ${token}` } }),
+        fetch(`${API_BASE_URL}/api/subjects`, { headers: { Authorization: `Bearer ${token}` } })
+      ]);
+      if (cRes.ok) setClassList(await cRes.json());
+      if (sRes.ok) setSubjectList(await sRes.json());
+    } catch (err) {
+      console.error('Error fetching academic data:', err);
+    }
+  }, [token, role]);
+
+  const fetchAllocationsAndSettings = useCallback(async () => {
+    if (!token || role !== 'Admin') return;
+    try {
+      const [aRes, sRes] = await Promise.all([
+        fetch(`${API_BASE_URL}/api/allocations`, { headers: { Authorization: `Bearer ${token}` } }),
+        fetch(`${API_BASE_URL}/api/settings`, { headers: { Authorization: `Bearer ${token}` } })
+      ]);
+      if (aRes.ok) setAllocations(await aRes.json());
+      if (sRes.ok) {
+        const data = await sRes.json();
+        if (Object.keys(data).length > 0) setSettings(data);
+      }
+    } catch (err) {
+      console.error('Error loading system config:', err);
+    }
+  }, [token, role]);
+
   const fetchData = useCallback(async () => {
     if (!token) return;
     const authHeaders = { Authorization: `Bearer ${token}` };
@@ -45,26 +115,23 @@ function App() {
         if (mySubRes.ok) {
           setMySubmissions(await mySubRes.json());
         } else {
-          // Fallback endpoint check
           const altMySubRes = await fetch(`${API_BASE_URL}/api/submissions/my-submissions`, { headers: authHeaders });
           if (altMySubRes.ok) setMySubmissions(await altMySubRes.json());
         }
       }
 
-      // 4. Fetch Users List (Admin)
+      // 4. Fetch Academic & Admin Configuration Data
+      if (role === 'Admin' || role === 'Teacher') {
+        await fetchAcademicData();
+      }
       if (role === 'Admin') {
-        const userRes = await fetch(`${API_BASE_URL}/api/users`, { headers: authHeaders });
-        if (userRes.ok) {
-          setUsers(await userRes.json());
-        } else {
-          const altUserRes = await fetch(`${API_BASE_URL}/api/admin/users`, { headers: authHeaders });
-          if (altUserRes.ok) setUsers(await altUserRes.json());
-        }
+        await fetchUsers();
+        await fetchAllocationsAndSettings();
       }
     } catch (error) {
       console.error('Error fetching portal data:', error);
     }
-  }, [token, role]);
+  }, [token, role, fetchUsers, fetchAcademicData, fetchAllocationsAndSettings]);
 
   useEffect(() => {
     fetchData();
@@ -117,38 +184,224 @@ function App() {
     setAssignments([]);
     setSubmissions([]);
     setMySubmissions([]);
-    setUsers([]);
+    setUsersList([]);
+    setClassList([]);
+    setSubjectList([]);
+    setAllocations([]);
+    setSettings({ AcademicYear: '2026-2027', AllowLateSubmissions: 'true' });
     localStorage.clear();
   };
 
   // ---------------------------------------------------------------------------
-  // Assignment Actions
+  // Admin Handlers (Users, Classes, Subjects, Allocations, Settings)
   // ---------------------------------------------------------------------------
-  const handleCreateAssignment = async (e) => {
+  const handleCreateUser = async (e) => {
     e.preventDefault();
     try {
-      const response = await fetch(`${API_BASE_URL}/api/assignments`, {
+      const payload = {
+        email: newUser.email,
+        password: newUser.password,
+        role: newUser.role,
+        classId: newUser.role === 'Student' && newUser.classId ? Number(newUser.classId) : null
+      };
+
+      const res = await fetch(`${API_BASE_URL}/api/users`, {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
           Authorization: `Bearer ${token}`
         },
-        body: JSON.stringify({ title, description, maxMarks: parseInt(maxMarks, 10) })
+        body: JSON.stringify(payload)
       });
 
-      if (response.ok) {
-        alert('Assignment published successfully!');
-        setTitle('');
-        setDescription('');
-        setMaxMarks(100);
+      if (res.ok) {
+        alert('User created successfully!');
+        setNewUser({ email: '', password: '', role: 'Student', classId: '' });
+        fetchUsers();
+      } else {
+        const errData = await res.json();
+        alert(errData.message || 'Failed to create user.');
+      }
+    } catch (err) {
+      console.error('Error creating user:', err);
+    }
+  };
+
+  const handleDeleteUser = async (userId) => {
+    if (!window.confirm('Are you sure you want to delete this user?')) return;
+    try {
+      const res = await fetch(`${API_BASE_URL}/api/users/${userId}`, {
+        method: 'DELETE',
+        headers: { Authorization: `Bearer ${token}` }
+      });
+      if (res.ok) {
+        alert('User deleted.');
+        fetchUsers();
+      } else {
+        alert('Failed to delete user.');
+      }
+    } catch (err) {
+      console.error('Error deleting user:', err);
+    }
+  };
+
+  const handleCreateClass = async (e) => {
+    e.preventDefault();
+    try {
+      const res = await fetch(`${API_BASE_URL}/api/classes`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          Authorization: `Bearer ${token}`
+        },
+        body: JSON.stringify(newClass)
+      });
+      if (res.ok) {
+        alert('Class added successfully!');
+        setNewClass({ name: '', section: '' });
+        fetchAcademicData();
+      } else {
+        alert('Failed to add class.');
+      }
+    } catch (err) {
+      console.error('Error creating class:', err);
+    }
+  };
+
+  const handleCreateSubject = async (e) => {
+    e.preventDefault();
+    try {
+      const res = await fetch(`${API_BASE_URL}/api/subjects`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          Authorization: `Bearer ${token}`
+        },
+        body: JSON.stringify(newSubject)
+      });
+      if (res.ok) {
+        alert('Subject added successfully!');
+        setNewSubject({ name: '', code: '' });
+        fetchAcademicData();
+      } else {
+        alert('Failed to add subject.');
+      }
+    } catch (err) {
+      console.error('Error creating subject:', err);
+    }
+  };
+
+  const handleCreateAllocation = async (e) => {
+    e.preventDefault();
+    try {
+      const res = await fetch(`${API_BASE_URL}/api/allocations`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          Authorization: `Bearer ${token}`
+        },
+        body: JSON.stringify({
+          teacherEmail: newAllocation.teacherEmail,
+          classId: Number(newAllocation.classId),
+          subjectId: Number(newAllocation.subjectId)
+        })
+      });
+      if (res.ok) {
+        alert('Teacher allocated successfully!');
+        setNewAllocation({ teacherEmail: '', classId: '', subjectId: '' });
+        fetchAllocationsAndSettings();
+      } else {
+        alert('Failed to create allocation.');
+      }
+    } catch (err) {
+      console.error('Error creating allocation:', err);
+    }
+  };
+
+  const handleSaveSetting = async (key, value) => {
+    try {
+      const res = await fetch(`${API_BASE_URL}/api/settings`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          Authorization: `Bearer ${token}`
+        },
+        body: JSON.stringify({ key, value })
+      });
+      if (res.ok) {
+        alert(`${key} updated!`);
+      } else {
+        alert(`Failed to update ${key}.`);
+      }
+    } catch (err) {
+      console.error('Error saving setting:', err);
+    }
+  };
+
+  // ---------------------------------------------------------------------------
+  // Assignment Save / Edit Actions
+  // ---------------------------------------------------------------------------
+  const handleSaveAssignment = async (e) => {
+    e.preventDefault();
+    const isEditing = Boolean(assignmentForm.id);
+    const url = isEditing
+      ? `${API_BASE_URL}/api/assignments/${assignmentForm.id}`
+      : `${API_BASE_URL}/api/assignments`;
+    const method = isEditing ? 'PUT' : 'POST';
+
+    const payload = {
+      title: assignmentForm.title,
+      description: assignmentForm.description,
+      maxMarks: Number(assignmentForm.maxMarks),
+      dueDate: assignmentForm.dueDate ? new Date(assignmentForm.dueDate).toISOString() : null,
+      isDraft: assignmentForm.isDraft,
+      classId: assignmentForm.classId ? Number(assignmentForm.classId) : null,
+      subjectId: assignmentForm.subjectId ? Number(assignmentForm.subjectId) : null,
+    };
+
+    try {
+      const res = await fetch(url, {
+        method,
+        headers: {
+          'Content-Type': 'application/json',
+          Authorization: `Bearer ${token}`,
+        },
+        body: JSON.stringify(payload),
+      });
+
+      if (res.ok) {
+        alert(`Assignment ${isEditing ? 'updated' : 'created'} successfully!`);
+        setAssignmentForm({
+          id: null,
+          title: '',
+          description: '',
+          maxMarks: 100,
+          dueDate: '',
+          isDraft: false,
+          classId: '',
+          subjectId: '',
+        });
         fetchData();
       } else {
-        alert('Failed to publish assignment.');
+        alert(`Failed to ${isEditing ? 'update' : 'create'} assignment.`);
       }
-    } catch (error) {
-      console.error('Error creating assignment:', error);
-      alert('Network error while creating assignment.');
+    } catch (err) {
+      console.error('Error saving assignment:', err);
+      alert('Network error while saving assignment.');
     }
+  };
+
+  const handleEditClick = (assignment) => {
+    setAssignmentForm({
+      id: assignment.id,
+      title: assignment.title || '',
+      description: assignment.description || '',
+      maxMarks: assignment.maxMarks || 100,
+      dueDate: assignment.dueDate ? assignment.dueDate.slice(0, 16) : '',
+      isDraft: Boolean(assignment.isDraft),
+      classId: assignment.classId || '',
+      subjectId: assignment.subjectId || '',
+    });
   };
 
   const handleDeleteAssignment = async (assignmentId) => {
@@ -195,12 +448,18 @@ function App() {
         alert('Submitted successfully!');
         fetchData();
       } else {
-        alert('Failed to submit answer.');
+        const err = await response.json();
+        alert(err.message || 'Failed to submit answer.');
       }
     } catch (error) {
       console.error('Error submitting answer:', error);
       alert('Network error while submitting answer.');
     }
+  };
+
+  // Alias for modal submission handler compatibility
+  const handleOpenSubmitModal = (assignmentId) => {
+    handleSubmitAnswer(assignmentId);
   };
 
   const handleGradeSubmission = async (subId) => {
@@ -210,6 +469,8 @@ function App() {
     const feedback = prompt('Enter Teacher Feedback:');
     if (feedback === null) return;
 
+    const status = prompt('Enter Status (e.g. Graded, Returned for Revision, Rejected):', 'Graded');
+
     try {
       const response = await fetch(`${API_BASE_URL}/api/submissions/${subId}/grade`, {
         method: 'PUT',
@@ -217,7 +478,11 @@ function App() {
           'Content-Type': 'application/json',
           Authorization: `Bearer ${token}`
         },
-        body: JSON.stringify({ marks: parseInt(marks, 10), feedback })
+        body: JSON.stringify({ 
+          marks: marks !== '' ? parseInt(marks, 10) : null, 
+          feedback,
+          status: status || 'Graded'
+        })
       });
 
       if (response.ok) {
@@ -232,6 +497,35 @@ function App() {
     }
   };
 
+  // Helper to resolve Class Name & Subject Name for Assignment cards
+  const getAssignmentTags = (a) => {
+    const className =
+      a.className ||
+      a.class?.name ||
+      (a.classId ? classList.find((c) => c.id === a.classId)?.name : null);
+
+    const section =
+      a.classSection ||
+      a.class?.section ||
+      (a.classId ? classList.find((c) => c.id === a.classId)?.section : null);
+
+    const subjectName =
+      a.subjectName ||
+      a.subject?.name ||
+      (a.subjectId ? subjectList.find((s) => s.id === a.subjectId)?.name : null);
+
+    return {
+      className: className ? `${className}${section ? ` (${section})` : ''}` : 'General',
+      subjectName: subjectName || 'General'
+    };
+  };
+
+  // Filter Submissions for Teacher/Admin View
+  const filteredSubmissions = submissions.filter((s) => {
+    if (selectedAssignmentFilter === 'ALL') return true;
+    return String(s.assignmentId) === String(selectedAssignmentFilter);
+  });
+
   // ---------------------------------------------------------------------------
   // Student Computations
   // ---------------------------------------------------------------------------
@@ -239,9 +533,16 @@ function App() {
     mySubmissions.map((sub) => sub.assignmentId)
   );
 
-  const pendingAssignments = assignments.filter(
-    (a) => !submittedAssignmentIds.has(a.id)
-  );
+  const pendingAssignments = assignments
+    .filter((a) => !a.isDraft && !submittedAssignmentIds.has(a.id))
+    .map((a) => {
+      const tags = getAssignmentTags(a);
+      return {
+        ...a,
+        className: tags.className,
+        subjectName: tags.subjectName
+      };
+    });
 
   const completedSubmissions = mySubmissions.map((sub) => {
     const assignment = assignments.find((a) => a.id === sub.assignmentId);
@@ -333,91 +634,443 @@ function App() {
 
       {/* Main Dashboard Layout */}
       <main className="app-container">
-        {/* ADMIN VIEW: User Management */}
+        {/* ADMIN VIEW */}
         {role === 'Admin' && (
-          <div className="card">
-            <h3>User Management</h3>
-            <p style={{ fontSize: '13px', color: 'var(--text-muted)', marginBottom: '16px' }}>
-              Registered accounts across the institution
-            </p>
-            <table className="table">
-              <thead>
-                <tr>
-                  <th>ID</th>
-                  <th>Email</th>
-                  <th>Role</th>
-                </tr>
-              </thead>
-              <tbody>
-                {users.length === 0 ? (
+          <div style={{ display: 'flex', flexDirection: 'column', gap: '24px', marginBottom: '24px' }}>
+            {/* Create User Form */}
+            <div className="card">
+              <h2 style={{ fontSize: '18px', fontWeight: 'bold', marginBottom: '16px' }}>
+                Admin Panel: Create New User
+              </h2>
+              <form onSubmit={handleCreateUser} style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(180px, 1fr))', gap: '12px' }}>
+                <input
+                  type="email"
+                  placeholder="Email address"
+                  value={newUser.email}
+                  onChange={(e) => setNewUser({ ...newUser, email: e.target.value })}
+                  required
+                  style={{ padding: '8px', border: '1px solid var(--border)', borderRadius: '4px' }}
+                />
+                <input
+                  type="password"
+                  placeholder="Password"
+                  value={newUser.password}
+                  onChange={(e) => setNewUser({ ...newUser, password: e.target.value })}
+                  required
+                  style={{ padding: '8px', border: '1px solid var(--border)', borderRadius: '4px' }}
+                />
+                <select
+                  value={newUser.role}
+                  onChange={(e) => setNewUser({ ...newUser, role: e.target.value })}
+                  style={{ padding: '8px', border: '1px solid var(--border)', borderRadius: '4px' }}
+                >
+                  <option value="Student">Student</option>
+                  <option value="Teacher">Teacher</option>
+                  <option value="Admin">Admin</option>
+                </select>
+
+                {newUser.role === 'Student' && (
+                  <select
+                    value={newUser.classId}
+                    onChange={(e) => setNewUser({ ...newUser, classId: e.target.value })}
+                    style={{ padding: '8px', border: '1px solid var(--border)', borderRadius: '4px' }}
+                  >
+                    <option value="">Select Enrolled Class</option>
+                    {classList.map((c) => (
+                      <option key={c.id} value={c.id}>{c.name} - Section {c.section}</option>
+                    ))}
+                  </select>
+                )}
+
+                <button type="submit" className="btn btn-primary">
+                  Add User
+                </button>
+              </form>
+            </div>
+
+            {/* Users List Table */}
+            <div className="card">
+              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '16px' }}>
+                <h2 style={{ fontSize: '18px', fontWeight: 'bold' }}>System Users</h2>
+                <button onClick={fetchUsers} className="btn btn-sm" style={{ background: '#e2e8f0' }}>
+                  Refresh List
+                </button>
+              </div>
+
+              <table className="table">
+                <thead>
                   <tr>
-                    <td colSpan="3" style={{ textAlign: 'center', color: 'var(--text-muted)' }}>
-                      No registered users found.
-                    </td>
+                    <th>ID</th>
+                    <th>Email</th>
+                    <th>Role</th>
+                    <th>Enrolled Class</th>
+                    <th>Action</th>
                   </tr>
-                ) : (
-                  users.map((u) => (
-                    <tr key={u.id}>
-                      <td>#{u.id}</td>
-                      <td>{u.email}</td>
-                      <td>
-                        <span className={`badge badge-${u.role}`}>{u.role}</span>
+                </thead>
+                <tbody>
+                  {usersList.length === 0 ? (
+                    <tr>
+                      <td colSpan="5" style={{ textAlign: 'center', color: 'var(--text-muted)' }}>
+                        No users found.
                       </td>
                     </tr>
-                  ))
-                )}
-              </tbody>
-            </table>
+                  ) : (
+                    usersList.map((u) => {
+                      const userClass = classList.find((c) => c.id === u.classId);
+                      return (
+                        <tr key={u.id}>
+                          <td>#{u.id}</td>
+                          <td style={{ fontWeight: '500' }}>{u.email}</td>
+                          <td>
+                            <span className={`badge badge-${u.role}`}>{u.role}</span>
+                          </td>
+                          <td>
+                            {userClass ? `${userClass.name} (${userClass.section})` : '--'}
+                          </td>
+                          <td>
+                            <button
+                              onClick={() => handleDeleteUser(u.id)}
+                              className="btn btn-danger btn-sm"
+                            >
+                              Delete
+                            </button>
+                          </td>
+                        </tr>
+                      );
+                    })
+                  )}
+                </tbody>
+              </table>
+            </div>
+
+            {/* ACADEMIC MANAGEMENT (CLASSES & SUBJECTS) */}
+            <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(300px, 1fr))', gap: '24px' }}>
+              {/* Manage Classes */}
+              <div className="card">
+                <h3 style={{ fontSize: '18px', fontWeight: 'bold', marginBottom: '16px' }}>Classes Management</h3>
+                <form onSubmit={handleCreateClass} style={{ display: 'flex', gap: '8px', marginBottom: '16px' }}>
+                  <input
+                    type="text"
+                    placeholder="Class Name (e.g. Class 10)"
+                    value={newClass.name}
+                    onChange={(e) => setNewClass({ ...newClass, name: e.target.value })}
+                    required
+                    style={{ flex: 1, padding: '8px', border: '1px solid var(--border)', borderRadius: '4px', fontSize: '14px' }}
+                  />
+                  <input
+                    type="text"
+                    placeholder="Section (e.g. A)"
+                    value={newClass.section}
+                    onChange={(e) => setNewClass({ ...newClass, section: e.target.value })}
+                    required
+                    style={{ width: '90px', padding: '8px', border: '1px solid var(--border)', borderRadius: '4px', fontSize: '14px' }}
+                  />
+                  <button type="submit" className="btn btn-primary btn-sm">
+                    Add
+                  </button>
+                </form>
+                <ul style={{ listStyle: 'none', padding: 0, margin: 0 }}>
+                  {classList.length === 0 ? (
+                    <li style={{ color: 'var(--text-muted)', fontSize: '14px' }}>No classes created yet.</li>
+                  ) : (
+                    classList.map((c) => (
+                      <li key={c.id} style={{ padding: '8px 0', borderBottom: '1px solid var(--border)', display: 'flex', justifyContent: 'space-between', fontSize: '14px' }}>
+                        <span><strong>{c.name}</strong> - Section {c.section}</span>
+                      </li>
+                    ))
+                  )}
+                </ul>
+              </div>
+
+              {/* Manage Subjects */}
+              <div className="card">
+                <h3 style={{ fontSize: '18px', fontWeight: 'bold', marginBottom: '16px' }}>Subjects Management</h3>
+                <form onSubmit={handleCreateSubject} style={{ display: 'flex', gap: '8px', marginBottom: '16px' }}>
+                  <input
+                    type="text"
+                    placeholder="Subject Name (e.g. Physics)"
+                    value={newSubject.name}
+                    onChange={(e) => setNewSubject({ ...newSubject, name: e.target.value })}
+                    required
+                    style={{ flex: 1, padding: '8px', border: '1px solid var(--border)', borderRadius: '4px', fontSize: '14px' }}
+                  />
+                  <input
+                    type="text"
+                    placeholder="Code (e.g. PHY101)"
+                    value={newSubject.code}
+                    onChange={(e) => setNewSubject({ ...newSubject, code: e.target.value })}
+                    required
+                    style={{ width: '110px', padding: '8px', border: '1px solid var(--border)', borderRadius: '4px', fontSize: '14px' }}
+                  />
+                  <button type="submit" className="btn btn-primary btn-sm">
+                    Add
+                  </button>
+                </form>
+                <ul style={{ listStyle: 'none', padding: 0, margin: 0 }}>
+                  {subjectList.length === 0 ? (
+                    <li style={{ color: 'var(--text-muted)', fontSize: '14px' }}>No subjects created yet.</li>
+                  ) : (
+                    subjectList.map((s) => (
+                      <li key={s.id} style={{ padding: '8px 0', borderBottom: '1px solid var(--border)', display: 'flex', justifyContent: 'space-between', fontSize: '14px' }}>
+                        <span><strong>{s.name}</strong> ({s.code})</span>
+                      </li>
+                    ))
+                  )}
+                </ul>
+              </div>
+            </div>
+
+            {/* TEACHER ALLOCATION & SYSTEM CONFIGURATION */}
+            <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(300px, 1fr))', gap: '24px' }}>
+              {/* Assign Teachers to Class & Subject */}
+              <div className="card">
+                <h3 style={{ fontSize: '18px', fontWeight: 'bold', marginBottom: '16px' }}>Assign Teacher to Subject & Class</h3>
+                <form onSubmit={handleCreateAllocation} style={{ display: 'flex', flexDirection: 'column', gap: '12px', marginBottom: '16px' }}>
+                  <select
+                    style={{ padding: '8px', border: '1px solid var(--border)', borderRadius: '4px', fontSize: '14px', width: '100%' }}
+                    value={newAllocation.teacherEmail}
+                    onChange={(e) => setNewAllocation({ ...newAllocation, teacherEmail: e.target.value })}
+                    required
+                  >
+                    <option value="">Select Teacher</option>
+                    {usersList.filter((u) => u.role === 'Teacher').map((t) => (
+                      <option key={t.id} value={t.email}>{t.email}</option>
+                    ))}
+                  </select>
+
+                  <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '8px' }}>
+                    <select
+                      style={{ padding: '8px', border: '1px solid var(--border)', borderRadius: '4px', fontSize: '14px', width: '100%' }}
+                      value={newAllocation.classId}
+                      onChange={(e) => setNewAllocation({ ...newAllocation, classId: e.target.value })}
+                      required
+                    >
+                      <option value="">Select Class</option>
+                      {classList.map((c) => (
+                        <option key={c.id} value={c.id}>{c.name} - {c.section}</option>
+                      ))}
+                    </select>
+
+                    <select
+                      style={{ padding: '8px', border: '1px solid var(--border)', borderRadius: '4px', fontSize: '14px', width: '100%' }}
+                      value={newAllocation.subjectId}
+                      onChange={(e) => setNewAllocation({ ...newAllocation, subjectId: e.target.value })}
+                      required
+                    >
+                      <option value="">Select Subject</option>
+                      {subjectList.map((s) => (
+                        <option key={s.id} value={s.id}>{s.name}</option>
+                      ))}
+                    </select>
+                  </div>
+
+                  <button type="submit" className="btn btn-primary" style={{ width: '100%', fontSize: '14px' }}>
+                    Assign Teacher
+                  </button>
+                </form>
+
+                <div style={{ display: 'flex', flexDirection: 'column', gap: '8px' }}>
+                  {allocations.length === 0 ? (
+                    <p style={{ color: 'var(--text-muted)', fontSize: '14px' }}>No allocations created yet.</p>
+                  ) : (
+                    allocations.map((a) => (
+                      <div key={a.id} style={{ padding: '8px 0', borderBottom: '1px solid var(--border)' }}>
+                        <p style={{ fontWeight: '600', fontSize: '14px' }}>{a.teacherEmail}</p>
+                        <p style={{ fontSize: '12px', color: 'var(--text-muted)' }}>{a.className} • {a.subjectName}</p>
+                      </div>
+                    ))
+                  )}
+                </div>
+              </div>
+
+              {/* Application Level Settings */}
+              <div className="card">
+                <h3 style={{ fontSize: '18px', fontWeight: 'bold', marginBottom: '16px' }}>Application Settings</h3>
+                <div style={{ display: 'flex', flexDirection: 'column', gap: '16px', fontSize: '14px' }}>
+                  <div>
+                    <label style={{ display: 'block', fontWeight: '500', marginBottom: '4px' }}>Academic Year</label>
+                    <div style={{ display: 'flex', gap: '8px' }}>
+                      <input
+                        type="text"
+                        style={{ flex: 1, padding: '8px', border: '1px solid var(--border)', borderRadius: '4px' }}
+                        value={settings.AcademicYear || ''}
+                        onChange={(e) => setSettings({ ...settings, AcademicYear: e.target.value })}
+                      />
+                      <button
+                        type="button"
+                        onClick={() => handleSaveSetting('AcademicYear', settings.AcademicYear)}
+                        className="btn btn-sm"
+                        style={{ background: '#334155', color: '#fff' }}
+                      >
+                        Save
+                      </button>
+                    </div>
+                  </div>
+
+                  <div>
+                    <label style={{ display: 'block', fontWeight: '500', marginBottom: '4px' }}>Allow Late Submissions</label>
+                    <div style={{ display: 'flex', gap: '8px' }}>
+                      <select
+                        style={{ flex: 1, padding: '8px', border: '1px solid var(--border)', borderRadius: '4px' }}
+                        value={settings.AllowLateSubmissions || 'true'}
+                        onChange={(e) => setSettings({ ...settings, AllowLateSubmissions: e.target.value })}
+                      >
+                        <option value="true">Enabled</option>
+                        <option value="false">Disabled</option>
+                      </select>
+                      <button
+                        type="button"
+                        onClick={() => handleSaveSetting('AllowLateSubmissions', settings.AllowLateSubmissions)}
+                        className="btn btn-sm"
+                        style={{ background: '#334155', color: '#fff' }}
+                      >
+                        Save
+                      </button>
+                    </div>
+                  </div>
+                </div>
+              </div>
+            </div>
           </div>
         )}
 
-        {/* TEACHER VIEW: Publish Assignment */}
-        {role === 'Teacher' && (
-          <div className="card">
-            <h3>Publish New Assignment</h3>
-            <form onSubmit={handleCreateAssignment} style={{ marginTop: '16px' }}>
-              <div className="grid-2">
-                <div className="form-group">
-                  <label>Title</label>
-                  <input
-                    type="text"
-                    value={title}
-                    onChange={(e) => setTitle(e.target.value)}
-                    required
-                    placeholder="e.g. Midterm Essay"
-                  />
-                </div>
-                <div className="form-group">
-                  <label>Max Marks</label>
-                  <input
-                    type="number"
-                    value={maxMarks}
-                    onChange={(e) => setMaxMarks(e.target.value)}
-                    required
-                  />
-                </div>
-              </div>
-              <div className="form-group">
-                <label>Instructions & Description</label>
+        {/* TEACHER & ADMIN VIEW: CREATE / EDIT ASSIGNMENT */}
+        {(role === 'Teacher' || role === 'Admin') && (
+          <div className="card" style={{ marginBottom: '24px' }}>
+            <h2 style={{ fontSize: '18px', fontWeight: 'bold', marginBottom: '16px' }}>
+              {assignmentForm.id ? '✏️ Edit Assignment' : '➕ Create Assignment'}
+            </h2>
+            <form onSubmit={handleSaveAssignment} style={{ display: 'flex', flexDirection: 'column', gap: '16px' }}>
+              <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(200px, 1fr))', gap: '16px' }}>
                 <input
                   type="text"
-                  value={description}
-                  onChange={(e) => setDescription(e.target.value)}
+                  placeholder="Title"
+                  value={assignmentForm.title}
+                  onChange={(e) => setAssignmentForm({ ...assignmentForm, title: e.target.value })}
                   required
-                  placeholder="Provide clear submission details..."
+                  style={{ padding: '8px 12px', border: '1px solid var(--border)', borderRadius: '6px', fontSize: '14px' }}
+                />
+                <input
+                  type="number"
+                  placeholder="Max Marks"
+                  value={assignmentForm.maxMarks}
+                  onChange={(e) => setAssignmentForm({ ...assignmentForm, maxMarks: e.target.value })}
+                  required
+                  style={{ padding: '8px 12px', border: '1px solid var(--border)', borderRadius: '6px', fontSize: '14px' }}
+                />
+                <input
+                  type="datetime-local"
+                  value={assignmentForm.dueDate}
+                  onChange={(e) => setAssignmentForm({ ...assignmentForm, dueDate: e.target.value })}
+                  style={{ padding: '8px 12px', border: '1px solid var(--border)', borderRadius: '6px', fontSize: '14px' }}
                 />
               </div>
-              <button type="submit" className="btn btn-primary">
-                Publish Assignment
-              </button>
+
+              <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(200px, 1fr))', gap: '16px' }}>
+                <select
+                  value={assignmentForm.classId}
+                  onChange={(e) => setAssignmentForm({ ...assignmentForm, classId: e.target.value })}
+                  style={{ padding: '8px 12px', border: '1px solid var(--border)', borderRadius: '6px', fontSize: '14px' }}
+                >
+                  <option value="">Select Target Class (Optional)</option>
+                  {classList.map((c) => (
+                    <option key={c.id} value={c.id}>
+                      {c.name} - Section {c.section}
+                    </option>
+                  ))}
+                </select>
+
+                <select
+                  value={assignmentForm.subjectId}
+                  onChange={(e) => setAssignmentForm({ ...assignmentForm, subjectId: e.target.value })}
+                  style={{ padding: '8px 12px', border: '1px solid var(--border)', borderRadius: '6px', fontSize: '14px' }}
+                >
+                  <option value="">Select Subject (Optional)</option>
+                  {subjectList.map((s) => (
+                    <option key={s.id} value={s.id}>
+                      {s.name} ({s.code})
+                    </option>
+                  ))}
+                </select>
+              </div>
+
+              <textarea
+                placeholder="Instructions / Description..."
+                rows={3}
+                value={assignmentForm.description}
+                onChange={(e) => setAssignmentForm({ ...assignmentForm, description: e.target.value })}
+                style={{ padding: '8px 12px', border: '1px solid var(--border)', borderRadius: '6px', fontSize: '14px', resize: 'vertical' }}
+              />
+
+              <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
+                <label style={{ display: 'flex', alignItems: 'center', gap: '8px', fontSize: '14px', cursor: 'pointer' }}>
+                  <input
+                    type="checkbox"
+                    checked={assignmentForm.isDraft}
+                    onChange={(e) => setAssignmentForm({ ...assignmentForm, isDraft: e.target.checked })}
+                  />
+                  Save as Draft (Hidden from students)
+                </label>
+
+                <div style={{ display: 'flex', gap: '8px' }}>
+                  {assignmentForm.id && (
+                    <button
+                      type="button"
+                      onClick={() =>
+                        setAssignmentForm({
+                          id: null,
+                          title: '',
+                          description: '',
+                          maxMarks: 100,
+                          dueDate: '',
+                          isDraft: false,
+                          classId: '',
+                          subjectId: ''
+                        })
+                      }
+                      className="btn btn-sm"
+                      style={{ background: '#e2e8f0', color: '#334155' }}
+                    >
+                      Cancel Edit
+                    </button>
+                  )}
+                  <button type="submit" className="btn btn-primary btn-sm">
+                    {assignmentForm.id
+                      ? 'Update Assignment'
+                      : assignmentForm.isDraft
+                      ? 'Save Draft'
+                      : 'Publish Assignment'}
+                  </button>
+                </div>
+              </div>
             </form>
           </div>
         )}
 
-        {/* TEACHER/ADMIN VIEW: Submissions Queue */}
+        {/* TEACHER/ADMIN VIEW: SUBMISSIONS QUEUE & FILTER */}
         {(role === 'Teacher' || role === 'Admin') && (
-          <div className="card">
-            <h3>Submissions Queue</h3>
+          <div className="card" style={{ marginBottom: '24px' }}>
+            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '16px', flexWrap: 'wrap', gap: '12px' }}>
+              <h3 style={{ fontSize: '18px', fontWeight: 'bold' }}>Submissions Queue</h3>
+              <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+                <label style={{ fontWeight: '600', fontSize: '14px', color: 'var(--text-muted)' }}>
+                  Filter by Assignment:
+                </label>
+                <select
+                  style={{ padding: '6px 12px', border: '1px solid var(--border)', borderRadius: '6px', fontSize: '14px' }}
+                  value={selectedAssignmentFilter}
+                  onChange={(e) => setSelectedAssignmentFilter(e.target.value)}
+                >
+                  <option value="ALL">All Assignments</option>
+                  {assignments.map((a) => (
+                    <option key={a.id} value={a.id}>
+                      {a.title}
+                    </option>
+                  ))}
+                </select>
+              </div>
+            </div>
+
             <table className="table">
               <thead>
                 <tr>
@@ -430,14 +1083,14 @@ function App() {
                 </tr>
               </thead>
               <tbody>
-                {submissions.length === 0 ? (
+                {filteredSubmissions.length === 0 ? (
                   <tr>
                     <td colSpan={role === 'Teacher' ? '6' : '5'} style={{ textAlign: 'center', color: 'var(--text-muted)' }}>
                       No submissions found.
                     </td>
                   </tr>
                 ) : (
-                  submissions.map((s) => (
+                  filteredSubmissions.map((s) => (
                     <tr key={s.id}>
                       <td>{s.studentEmail}</td>
                       <td>{s.answerText}</td>
@@ -461,96 +1114,152 @@ function App() {
           </div>
         )}
 
-        {/* TEACHER/ADMIN VIEW: Active Assignments List */}
+        {/* TEACHER/ADMIN VIEW: ACTIVE ASSIGNMENTS LIST */}
         {(role === 'Teacher' || role === 'Admin') && (
-          <div className="card">
+          <div className="card" style={{ marginBottom: '24px' }}>
             <h3>Active Assignments</h3>
             <div style={{ display: 'grid', gap: '16px', marginTop: '16px' }}>
               {assignments.length === 0 ? (
                 <p style={{ color: 'var(--text-muted)', fontSize: '14px' }}>No active assignments available.</p>
               ) : (
-                assignments.map((a) => (
-                  <div
-                    key={a.id}
-                    style={{
-                      border: '1px solid var(--border)',
-                      borderRadius: '8px',
-                      padding: '16px',
-                      background: 'var(--bg-main)'
-                    }}
-                  >
-                    <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start' }}>
-                      <div>
-                        <h4 style={{ fontSize: '16px' }}>{a.title}</h4>
-                        <p style={{ fontSize: '14px', color: 'var(--text-muted)', marginTop: '4px' }}>
-                          {a.description}
-                        </p>
-                      </div>
-                      <span className="badge" style={{ background: '#e2e8f0' }}>
-                        Max Marks: {a.maxMarks}
-                      </span>
-                    </div>
+                assignments.map((a) => {
+                  const tags = getAssignmentTags(a);
+                  return (
+                    <div
+                      key={a.id}
+                      style={{
+                        border: '1px solid var(--border)',
+                        borderRadius: '8px',
+                        padding: '16px',
+                        background: 'var(--bg-main)'
+                      }}
+                    >
+                      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start' }}>
+                        <div>
+                          <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+                            <h4 style={{ fontSize: '16px' }}>{a.title}</h4>
+                            {a.isDraft && (
+                              <span style={{ background: '#fef3c7', color: '#92400e', fontSize: '12px', fontWeight: 'bold', padding: '2px 8px', borderRadius: '4px' }}>
+                                DRAFT
+                              </span>
+                            )}
+                          </div>
+                          <p style={{ fontSize: '14px', color: 'var(--text-muted)', marginTop: '4px' }}>
+                            {a.description}
+                          </p>
 
-                    <div style={{ display: 'flex', gap: '8px', marginTop: '12px' }}>
-                      <button onClick={() => handleDeleteAssignment(a.id)} className="btn btn-danger btn-sm">
-                        Delete Assignment
-                      </button>
+                          {/* Class & Subject Tags */}
+                          <div style={{ display: 'flex', alignItems: 'center', gap: '8px', marginTop: '8px', flexWrap: 'wrap' }}>
+                            {tags.className && (
+                              <span className="badge" style={{ background: '#e0e7ff', color: '#3730a3', fontWeight: '600', padding: '2px 8px', fontSize: '12px', borderRadius: '4px' }}>
+                                📚 {tags.className}
+                              </span>
+                            )}
+                            {tags.subjectName && (
+                              <span className="badge" style={{ background: '#d1fae5', color: '#065f46', fontWeight: '600', padding: '2px 8px', fontSize: '12px', borderRadius: '4px' }}>
+                                📖 {tags.subjectName}
+                              </span>
+                            )}
+                            {a.dueDate && (
+                              <span style={{ fontSize: '12px', color: '#dc2626', fontWeight: '500' }}>
+                                ⏰ Due: {new Date(a.dueDate).toLocaleString()}
+                              </span>
+                            )}
+                          </div>
+                        </div>
+
+                        <span className="badge" style={{ background: '#e2e8f0' }}>
+                          Max Marks: {a.maxMarks}
+                        </span>
+                      </div>
+
+                      <div style={{ display: 'flex', gap: '8px', marginTop: '12px' }}>
+                        <button onClick={() => handleEditClick(a)} className="btn btn-sm" style={{ background: '#2563eb', color: '#fff' }}>
+                          Edit
+                        </button>
+                        <button onClick={() => handleDeleteAssignment(a.id)} className="btn btn-danger btn-sm">
+                          Delete
+                        </button>
+                      </div>
                     </div>
-                  </div>
-                ))
+                  );
+                })
               )}
             </div>
           </div>
         )}
 
-        {/* STUDENT VIEW: 2-SEGMENT DASHBOARD */}
+        {/* STUDENT VIEW: 2-SEGMENT DASHBOARD (ENHANCED) */}
         {role === 'Student' && (
           <div style={{ display: 'flex', flexDirection: 'column', gap: '24px' }}>
-            {/* Segment 1: Pending Assignments */}
+            {/* Segment 1: Pending Class Assignments */}
             <div className="card">
               <h2 style={{ fontSize: '18px', fontWeight: 'bold', marginBottom: '16px', display: 'flex', alignItems: 'center', gap: '8px' }}>
-                <span>📝</span> Pending Assignments
+                <span>📝</span> Class Assignments
               </h2>
 
               {pendingAssignments.length === 0 ? (
                 <p style={{ color: 'var(--text-muted)', fontSize: '14px', textAlign: 'center', padding: '16px 0' }}>
-                  🎉 All caught up! You have no pending assignments to submit.
+                  🎉 All caught up! No pending assignments for your class.
                 </p>
               ) : (
-                <div style={{ display: 'flex', flexDirection: 'column', gap: '12px' }}>
-                  {pendingAssignments.map((assignment) => (
-                    <div
-                      key={assignment.id}
-                      style={{
-                        display: 'flex',
-                        justifyContent: 'space-between',
-                        alignItems: 'center',
-                        padding: '16px',
-                        border: '1px solid var(--border)',
-                        borderRadius: '8px',
-                        background: 'var(--bg-main)'
-                      }}
-                    >
-                      <div>
-                        <h3 style={{ fontSize: '16px', fontWeight: '600' }}>{assignment.title}</h3>
-                        <p style={{ fontSize: '14px', color: 'var(--text-muted)', marginTop: '4px' }}>{assignment.description}</p>
-                        <span className="badge" style={{ background: '#e2e8f0', marginTop: '8px', display: 'inline-block' }}>
-                          Max Marks: {assignment.maxMarks}
-                        </span>
-                      </div>
-                      <button
-                        onClick={() => handleSubmitAnswer(assignment.id)}
-                        className="btn btn-primary btn-sm"
+                <div style={{ display: 'flex', flexDirection: 'column', gap: '16px' }}>
+                  {pendingAssignments.map((assignment) => {
+                    const isOverdue = assignment.dueDate && new Date() > new Date(assignment.dueDate);
+                    return (
+                      <div
+                        key={assignment.id}
+                        style={{
+                          padding: '16px',
+                          border: '1px solid var(--border)',
+                          borderRadius: '8px',
+                          background: 'var(--bg-main)'
+                        }}
                       >
-                        Submit Answer
-                      </button>
-                    </div>
-                  ))}
+                        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', marginBottom: '8px' }}>
+                          <div>
+                            <h3 style={{ fontSize: '16px', fontWeight: '600' }}>{assignment.title}</h3>
+                            <div style={{ display: 'flex', gap: '8px', margin: '4px 0' }}>
+                              <span className="badge" style={{ background: '#e0e7ff', color: '#3730a3', fontWeight: '600', padding: '2px 8px', fontSize: '12px', borderRadius: '4px' }}>
+                                📚 {assignment.className}
+                              </span>
+                              <span className="badge" style={{ background: '#d1fae5', color: '#065f46', fontWeight: '600', padding: '2px 8px', fontSize: '12px', borderRadius: '4px' }}>
+                                📖 {assignment.subjectName}
+                              </span>
+                            </div>
+                          </div>
+                          <span className="badge" style={{ background: '#e2e8f0' }}>
+                            Max Marks: {assignment.maxMarks}
+                          </span>
+                        </div>
+
+                        <p style={{ fontSize: '14px', color: 'var(--text-muted)', marginBottom: '12px' }}>{assignment.description}</p>
+
+                        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', paddingTop: '8px', borderTop: '1px solid var(--border)', fontSize: '12px' }}>
+                          {assignment.dueDate ? (
+                            <span style={{ fontWeight: '600', color: isOverdue ? '#dc2626' : 'var(--text-muted)' }}>
+                              ⏰ Deadline: {new Date(assignment.dueDate).toLocaleString()}
+                              {isOverdue && ' (OVERDUE)'}
+                            </span>
+                          ) : (
+                            <span style={{ color: 'var(--text-muted)' }}>No deadline set</span>
+                          )}
+
+                          <button
+                            onClick={() => handleOpenSubmitModal(assignment.id)}
+                            className={`btn btn-sm ${isOverdue ? 'btn-danger' : 'btn-primary'}`}
+                          >
+                            Submit Answer
+                          </button>
+                        </div>
+                      </div>
+                    );
+                  })}
                 </div>
               )}
             </div>
 
-            {/* Segment 2: Submitted / Done Assignments */}
+            {/* Segment 2: Completed & Resubmission Support */}
             <div className="card">
               <h2 style={{ fontSize: '18px', fontWeight: 'bold', marginBottom: '16px', display: 'flex', alignItems: 'center', gap: '8px' }}>
                 <span>✅</span> Completed & Submitted
@@ -566,17 +1275,22 @@ function App() {
                     <tr>
                       <th>Assignment</th>
                       <th>Your Answer</th>
+                      <th>Submitted At</th>
                       <th>Status</th>
                       <th>Marks</th>
                       <th>Feedback</th>
+                      <th>Action</th>
                     </tr>
                   </thead>
                   <tbody>
                     {completedSubmissions.map((sub) => (
                       <tr key={sub.id}>
                         <td style={{ fontWeight: '600' }}>{sub.assignmentTitle}</td>
-                        <td style={{ color: 'var(--text-muted)', maxWidth: '240px', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                        <td style={{ color: 'var(--text-muted)', maxWidth: '200px', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
                           {sub.answerText}
+                        </td>
+                        <td style={{ fontSize: '12px', color: 'var(--text-muted)' }}>
+                          {sub.submittedAt ? new Date(sub.submittedAt).toLocaleString() : '--'}
                         </td>
                         <td>
                           <span className={`badge badge-${sub.status}`}>{sub.status}</span>
@@ -588,6 +1302,15 @@ function App() {
                         </td>
                         <td style={{ fontStyle: 'italic', color: 'var(--text-muted)' }}>
                           {sub.feedback || 'Pending review...'}
+                        </td>
+                        <td>
+                          <button
+                            onClick={() => handleOpenSubmitModal(sub.assignmentId)}
+                            className="btn btn-sm"
+                            style={{ background: '#e2e8f0', color: '#1e293b', fontSize: '12px' }}
+                          >
+                            Update / Resubmit
+                          </button>
                         </td>
                       </tr>
                     ))}

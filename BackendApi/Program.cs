@@ -1,73 +1,50 @@
-global using BackendApi.Data;
+using System.Text;
+using BackendApi.Data;
 using BackendApi.Services;
 using Microsoft.AspNetCore.Authentication.JwtBearer;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.IdentityModel.Tokens;
 using Microsoft.OpenApi.Models;
-using System.Text;
+using Serilog;
 
 var builder = WebApplication.CreateBuilder(args);
 
-// Database Connection
+// 1. Configure Serilog API Logging
+Log.Logger = new LoggerConfiguration()
+    .WriteTo.Console()
+    .WriteTo.File("logs/api-log-.txt", rollingInterval: RollingInterval.Day)
+    .CreateLogger();
+
+builder.Host.UseSerilog();
+
+// 2. Database Connection & Domain Services
 builder.Services.AddDbContext<AppDbContext>(options =>
     options.UseNpgsql(builder.Configuration.GetConnectionString("DefaultConnection")));
 
-// Services
 builder.Services.AddScoped<PasswordService>();
 builder.Services.AddControllers();
 builder.Services.AddEndpointsApiExplorer();
 
-// CORS Policy
-builder.Services.AddCors(options =>
+// 3. Configure Swagger with JWT Bearer Support
+builder.Services.AddSwaggerGen(c =>
 {
-    options.AddPolicy("Frontend", policy =>
-        policy.AllowAnyOrigin()
-              .AllowAnyHeader()
-              .AllowAnyMethod());
-});
-
-// JWT Authentication Setup
-var jwtKey = builder.Configuration["Jwt:Key"] ?? "DefaultSuperSecretKeyForDevelopment12345!";
-var key = Encoding.UTF8.GetBytes(jwtKey);
-
-builder.Services.AddAuthentication(JwtBearerDefaults.AuthenticationScheme)
-    .AddJwtBearer(options =>
+    c.SwaggerDoc("v1", new OpenApiInfo
     {
-        options.TokenValidationParameters = new TokenValidationParameters
-        {
-            ValidateIssuerSigningKey = true,
-            IssuerSigningKey = new SymmetricSecurityKey(key),
-            ValidateIssuer = true,
-            ValidateAudience = true,
-            ValidIssuer = builder.Configuration["Jwt:Issuer"] ?? "BackendApi",
-            ValidAudience = builder.Configuration["Jwt:Audience"] ?? "FrontendWeb",
-            ClockSkew = TimeSpan.Zero
-        };
-    });
-
-builder.Services.AddAuthorization();
-
-// Swagger Documentation Setup
-builder.Services.AddSwaggerGen(options =>
-{
-    options.SwaggerDoc("v1", new OpenApiInfo
-    {
-        Title = "Assignment Management API",
+        Title = "School Management System API",
         Version = "v1",
-        Description = "Assignment Management System API"
+        Description = "Assignment Management System API with JWT Bearer Token Support"
     });
 
-    options.AddSecurityDefinition("Bearer", new OpenApiSecurityScheme
+    c.AddSecurityDefinition("Bearer", new OpenApiSecurityScheme
     {
+        Description = "JWT Authorization header using the Bearer scheme. Enter 'Bearer' [space] and then your token.",
         Name = "Authorization",
-        Type = SecuritySchemeType.Http,
-        Scheme = "bearer",
-        BearerFormat = "JWT",
         In = ParameterLocation.Header,
-        Description = "Enter: Bearer {your JWT token}"
+        Type = SecuritySchemeType.ApiKey,
+        Scheme = "Bearer"
     });
 
-    options.AddSecurityRequirement(new OpenApiSecurityRequirement
+    c.AddSecurityRequirement(new OpenApiSecurityRequirement
     {
         {
             new OpenApiSecurityScheme
@@ -83,22 +60,52 @@ builder.Services.AddSwaggerGen(options =>
     });
 });
 
+// 4. Configure JWT Authentication
+var jwtKey = builder.Configuration["Jwt:Key"] ?? "SuperSecretKeyForJWTTokenGeneration123456!";
+var key = Encoding.UTF8.GetBytes(jwtKey);
+
+builder.Services.AddAuthentication(JwtBearerDefaults.AuthenticationScheme)
+    .AddJwtBearer(options =>
+    {
+        options.TokenValidationParameters = new TokenValidationParameters
+        {
+            ValidateIssuerSigningKey = true,
+            IssuerSigningKey = new SymmetricSecurityKey(key),
+            ValidateIssuer = false,
+            ValidateAudience = false,
+            ClockSkew = TimeSpan.Zero
+        };
+    });
+
+builder.Services.AddAuthorization();
+
+// 5. Configure CORS
+builder.Services.AddCors(options =>
+{
+    options.AddPolicy("AllowAll", policy =>
+        policy.AllowAnyOrigin().AllowAnyMethod().AllowAnyHeader());
+});
+
 var app = builder.Build();
 
-app.UseCors("Frontend");
-
-if (app.Environment.IsDevelopment())
+// 6. HTTP Request Pipeline Configuration
+if (app.Environment.IsDevelopment() || true)
 {
     app.UseSwagger();
-    app.UseSwaggerUI();
+    app.UseSwaggerUI(c =>
+    {
+        c.SwaggerEndpoint("/swagger/v1/swagger.json", "School API v1");
+        c.RoutePrefix = "swagger";
+    });
 }
 
+app.UseSerilogRequestLogging();
+app.UseCors("AllowAll");
 app.UseAuthentication();
 app.UseAuthorization();
-
 app.MapControllers();
 
-// Seed Database
+// 7. Auto-seed Default Database on Startup
 using (var scope = app.Services.CreateScope())
 {
     var db = scope.ServiceProvider.GetRequiredService<AppDbContext>();
@@ -106,4 +113,4 @@ using (var scope = app.Services.CreateScope())
     await DbSeeder.SeedAsync(db, passwordService);
 }
 
-await app.RunAsync("http://localhost:5000");
+await app.RunAsync();

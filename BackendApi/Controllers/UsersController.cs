@@ -20,18 +20,32 @@ public class UsersController : ControllerBase
 
     // GET: api/users
     [HttpGet]
-    public async Task<IActionResult> GetAllUsers()
+    public async Task<IActionResult> GetAllUsers([FromQuery] int page = 1, [FromQuery] int pageSize = 10)
     {
-        var users = await _db.Users
+        var query = _db.Users.AsQueryable();
+
+        var totalItems = await query.CountAsync();
+        var items = await query
+            .OrderBy(u => u.Id)
+            .Skip((page - 1) * pageSize)
+            .Take(pageSize)
             .Select(u => new
             {
                 u.Id,
                 u.Email,
-                u.Role
+                u.Role,
+                u.ClassId
             })
             .ToListAsync();
 
-        return Ok(users);
+        return Ok(new
+        {
+            totalItems,
+            page,
+            pageSize,
+            totalPages = (int)Math.Ceiling(totalItems / (double)pageSize),
+            data = items
+        });
     }
 
     // POST: api/users
@@ -47,13 +61,14 @@ public class UsersController : ControllerBase
         {
             Email = dto.Email,
             PasswordHash = BCrypt.Net.BCrypt.HashPassword(dto.Password),
-            Role = dto.Role
+            Role = dto.Role,
+            ClassId = dto.Role == "Student" ? dto.ClassId : null
         };
 
         _db.Users.Add(user);
         await _db.SaveChangesAsync();
 
-        return Ok(new { user.Id, user.Email, user.Role });
+        return Ok(new { user.Id, user.Email, user.Role, user.ClassId });
     }
 
     // PUT: api/users/{id}/reset-password
@@ -83,5 +98,5 @@ public class UsersController : ControllerBase
     }
 }
 
-public record CreateUserDto(string Email, string Password, string Role);
+public record CreateUserDto(string Email, string Password, string Role, int? ClassId);
 public record ResetPasswordDto(string NewPassword);
