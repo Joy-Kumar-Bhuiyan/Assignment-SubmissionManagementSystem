@@ -1,16 +1,40 @@
+# =========================
 # .NET build output
+# =========================
 **/bin/
 **/obj/
 *.user
 *.suo
+TestResults/
 
+# =========================
+# Visual Studio
+# =========================
+.vs/
+
+# =========================
+# Local configuration / secrets
+# =========================
+appsettings.Development.json
+appsettings.Local.json
+.env
+.env.*
+!.env.example
+
+# =========================
+# Logs
+# =========================
 logs/
+*.log
 
+# =========================
 # Node dependencies & build output
+# =========================
 **/node_modules/
 **/dist/
-**/appsettings.Local.json
 
+# =========================
 # System files
+# =========================
 .DS_Store
 Thumbs.db
