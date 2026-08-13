@@ -1,0 +1,139 @@
+[1mdiff --git a/.gitignore b/.gitignore[m
+[1mindex 84d9dfb..adf9d67 100644[m
+[1m--- a/.gitignore[m
+[1m+++ b/.gitignore[m
+[36m@@ -4,9 +4,12 @@[m
+ *.user[m
+ *.suo[m
+ [m
+[32m+[m[32mlogs/[m
+[32m+[m
+ # Node dependencies & build output[m
+ **/node_modules/[m
+ **/dist/[m
+[32m+[m[32m**/appsettings.Local.json[m
+ [m
+ # System files[m
+ .DS_Store[m
+[1mdiff --git a/BackendApi/BackendApi.csproj b/BackendApi/BackendApi.csproj[m
+[1mindex 175ed2f..f093c5e 100644[m
+[1m--- a/BackendApi/BackendApi.csproj[m
+[1m+++ b/BackendApi/BackendApi.csproj[m
+[36m@@ -1,9 +1,10 @@[m
+[31m-<Project Sdk="Microsoft.NET.Sdk.Web">[m
+[32m+[m[32m﻿<Project Sdk="Microsoft.NET.Sdk.Web">[m
+ [m
+   <PropertyGroup>[m
+     <TargetFramework>net10.0</TargetFramework>[m
+     <Nullable>enable</Nullable>[m
+     <ImplicitUsings>enable</ImplicitUsings>[m
+[32m+[m[32m    <UserSecretsId>1413586a-5e73-4eb2-b492-fcd5123aeb8d</UserSecretsId>[m
+   </PropertyGroup>[m
+ [m
+   <ItemGroup>[m
+[1mdiff --git a/BackendApi/Program.cs b/BackendApi/Program.cs[m
+[1mindex 21ee355..1ce3bac 100644[m
+[1m--- a/BackendApi/Program.cs[m
+[1m+++ b/BackendApi/Program.cs[m
+[36m@@ -14,7 +14,11 @@[m [mpublic class Program[m
+     public static async Task Main(string[] args)[m
+     {[m
+         var builder = WebApplication.CreateBuilder(args);[m
+[31m-[m
+[32m+[m[32m        builder.Configuration.AddJsonFile([m
+[32m+[m[32m        "appsettings.Local.json",[m
+[32m+[m[32m        optional: true,[m
+[32m+[m[32m        reloadOnChange: true[m
+[32m+[m[32m);[m
+         // 1. Configure Serilog API Logging[m
+         Log.Logger = new LoggerConfiguration()[m
+             .WriteTo.Console()[m
+[1mdiff --git a/BackendApi/appsettings.json b/BackendApi/appsettings.json[m
+[1mindex 1c469c8..e40ea6d 100644[m
+[1m--- a/BackendApi/appsettings.json[m
+[1m+++ b/BackendApi/appsettings.json[m
+[36m@@ -1,9 +1,9 @@[m
+ {[m
+   "ConnectionStrings": {[m
+[31m-    "DefaultConnection": "Host=localhost;Port=5432;Database=SchoolDb;Username=postgres;Password=5432"[m
+[32m+[m[32m    "DefaultConnection": ""[m
+   },[m
+   "Jwt": {[m
+[31m-    "Key": "THIS_IS_A_SUPER_SECRET_MINIMUM_32_CHARACTER_KEY_2026",[m
+[32m+[m[32m    "Key": "",[m
+     "Issuer": "AssignmentManagementSystem",[m
+     "Audience": "AssignmentManagementSystemUsers",[m
+     "ExpiryHours": 24[m
+[1mdiff --git a/BackendApi/logs/api-log-20260813.txt b/BackendApi/logs/api-log-20260813.txt[m
+[1mdeleted file mode 100644[m
+[1mindex 6fbe1a3..0000000[m
+[1m--- a/BackendApi/logs/api-log-20260813.txt[m
+[1m+++ /dev/null[m
+[36m@@ -1,14254 +0,0 @@[m
+[31m-2026-08-13 00:12:18.312 +06:00 [INF] Executed DbCommand (18ms) [Parameters=[], CommandType='"Text"', CommandTimeout='30'][m
+[31m-SELECT "MigrationId", "ProductVersion"[m
+[31m-FROM "__EFMigrationsHistory"[m
+[31m-ORDER BY "MigrationId";[m
+[31m-2026-08-13 00:12:18.527 +06:00 [INF] Executed DbCommand (7ms) [Parameters=[], CommandType='"Text"', CommandTimeout='30'][m
+[31m-SELECT 1[m
+[31m-2026-08-13 00:12:18.596 +06:00 [INF] Executed DbCommand (7ms) [Parameters=[], CommandType='"Text"', CommandTimeout='30'][m
+[31m-CREATE TABLE IF NOT EXISTS "__EFMigrationsHistory" ([m
+[31m-    "MigrationId" character varying(150) NOT NULL,[m
+[31m-    "ProductVersion" character varying(32) NOT NULL,[m
+[31m-    CONSTRAINT "PK___EFMigrationsHistory" PRIMARY KEY ("MigrationId")[m
+[31m-);[m
+[31m-2026-08-13 00:12:18.620 +06:00 [INF] Executed DbCommand (4ms) [Parameters=[], CommandType='"Text"', CommandTimeout='30'][m
+[31m-LOCK TABLE "__EFMigrationsHistory" IN ACCESS EXCLUSIVE MODE[m
+[31m-2026-08-13 00:12:18.693 +06:00 [INF] Executed DbCommand (11ms) [Parameters=[], CommandType='"Text"', CommandTimeout='30'][m
+[31m-SELECT "MigrationId", "ProductVersion"[m
+[31m-FROM "__EFMigrationsHistory"[m
+[31m-ORDER BY "MigrationId";[m
+[31m-2026-08-13 00:12:18.700 +06:00 [INF] No migrations were applied. The database is already up to date.[m
+[31m-2026-08-13 00:12:18.947 +06:00 [INF] Executed DbCommand (4ms) [Parameters=[], CommandType='"Text"', CommandTimeout='30'][m
+[31m-SELECT EXISTS ([m
+[31m-    SELECT 1[m
+[31m-    FROM "Users" AS u)[m
+[31m-2026-08-13 00:12:18.971 +06:00 [INF] User profile is available. Using 'C:\Users\ASUS\AppData\Local\ASP.NET\DataProtection-Keys' as key repository and Windows DPAPI to encrypt keys at rest.[m
+[31m-2026-08-13 00:12:19.054 +06:00 [INF] Now listening on: http://localhost:5288[m
+[31m-2026-08-13 00:12:19.056 +06:00 [INF] Application started. Press Ctrl+C to shut down.[m
+[31m-2026-08-13 00:12:19.057 +06:00 [INF] Hosting environment: Development[m
+[31m-2026-08-13 00:12:19.058 +06:00 [INF] Content root path: C:\Project\SchoolSystem\BackendApi[m
+[31m-2026-08-13 00:13:02.229 +06:00 [INF] Request starting HTTP/1.1 GET http://localhost:5288/ - null null[m
+[31m-2026-08-13 00:13:02.333 +06:00 [INF] HTTP GET / responded 404 in 24.9333 ms[m
+[31m-2026-08-13 00:13:02.337 +06:00 [INF] Request finished HTTP/1.1 GET http://localhost:5288/ - 404 0 null 134.2937ms[m
+[31m-2026-08-13 00:13:02.342 +06:00 [INF] Request reached the end of the middleware pipeline without being handled by application code. Request path: GET http://localhost:5288/, Response status code: 404[m
+[31m-2026-08-13 00:13:13.384 +06:00 [INF] Request starting HTTP/1.1 GET http://localhost:5288/swagger/v1/swagger.json - null null[m
+[31m-2026-08-13 00:13:13.518 +06:00 [INF] Request finished HTTP/1.1 GET http://localhost:5288/swagger/v1/swagger.json - 200 null application/json;charset=utf-8 134.0649ms[m
+[31m-2026-08-13 00:16:30.373 +06:00 [INF] Application is shutting down...[m
+[31m-2026-08-13 00:16:39.119 +06:00 [INF] Executed DbCommand (16ms) [Parameters=[], CommandType='"Text"', CommandTimeout='30'][m
+[31m-SELECT "MigrationId", "ProductVersion"[m
+[31m-FROM "__EFMigrationsHistory"[m
+[31m-ORDER BY "MigrationId";[m
+[31m-2026-08-13 00:16:39.298 +06:00 [INF] Executed DbCommand (6ms) [Parameters=[], CommandType='"Text"', CommandTimeout='30'][m
+[31m-SELECT 1[m
+[31m-2026-08-13 00:16:39.370 +06:00 [INF] Executed DbCommand (23ms) [Parameters=[], CommandType='"Text"', CommandTimeout='30'][m
+[31m-CREATE TABLE IF NOT EXISTS "__EFMigrationsHistory" ([m
+[31m-    "MigrationId" character varying(150) NOT NULL,[m
+[31m-    "ProductVersion" character varying(32) NOT NULL,[m
+[31m-    CONSTRAINT "PK___EFMigrationsHistory" PRIMARY KEY ("MigrationId")[m
+[31m-);[m
+[31m-2026-08-13 00:16:39.385 +06:00 [INF] Executed DbCommand (1ms) [Parameters=[], CommandType='"Text"', CommandTimeout='30'][m
+[31m-LOCK TABLE "__EFMigrationsHistory" IN ACCESS EXCLUSIVE MODE[m
+[31m-2026-08-13 00:16:39.390 +06:00 [INF] Executed DbCommand (2ms) [Parameters=[], CommandType='"Text"', CommandTimeout='30'][m
+[31m-SELECT "MigrationId", "ProductVersion"[m
+[31m-FROM "__EFMigrationsHistory"[m
+[31m-ORDER BY "MigrationId";[m
+[31m-2026-08-13 00:16:39.397 +06:00 [INF] No migrations were applied. The database is already up to date.[m
+[31m-2026-08-13 00:16:39.564 +06:00 [INF] Executed DbCommand (3ms) [Parameters=[], CommandType='"Text"', CommandTimeout='30'][m
+[31m-SELECT EXISTS ([m
+[31m-    SELECT 1[m
+[31m-    FROM "Users" AS u)[m
+[31m-2026-08-13 00:16:39.590 +06:00 [INF] User profile is available. Using 'C:\Users\ASUS\AppData\Local\ASP.NET\DataProtection-Keys' as key repository and Windows DPAPI to encrypt keys at rest.[m
+[31m-2026-08-13 00:16:39.672 +06:00 [INF] Now listening on: http://localhost:5000[m
+[31m-2026-08-13 00:16:39.674 +06:00 [INF] Application started. Press Ctrl+C to shut down.[m
+[31m-2026-08-13 00:16:39.674 +06:00 [INF] Hosting environment: Development[m
+[31m-2026-08-13 00:16:39.675 +06:00 [INF] Content root path: C:\Project\SchoolSystem\BackendApi[m
+[31m-2026-08-13 00:16:45.616 +06:00 [INF] Request starting HTTP/1.1 OPTIONS http://localhost:5000/api/auth/login - null null[m
+[31m-2026-08-13 00:16:45.651 +06:00 [INF] CORS policy execution successful.[m
+[31m-2026-08-13 00:16:45.654 +06:00 [INF] HTTP OPTIONS /api/auth/login responded 204 in 3.1520 ms[m
+[31m-2026-08-13 00:16:45.660 +06:00 [INF] Request finished HTTP/1.1 OPT

@@ -4,9 +4,12 @@
 *.user
 *.suo
 
+logs/
+
 # Node dependencies & build output
 **/node_modules/
 **/dist/
+**/appsettings.Local.json
 
 # System files
 .DS_Store

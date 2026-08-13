@@ -14,7 +14,11 @@ public class Program
     public static async Task Main(string[] args)
     {
         var builder = WebApplication.CreateBuilder(args);
-
+        builder.Configuration.AddJsonFile(
+        "appsettings.Local.json",
+        optional: true,
+        reloadOnChange: true
+);
         // 1. Configure Serilog API Logging
         Log.Logger = new LoggerConfiguration()
             .WriteTo.Console()
