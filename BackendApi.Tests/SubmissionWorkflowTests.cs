@@ -14,14 +14,14 @@ public class SubmissionWorkflowTests
     }
 
     [Fact]
-    public void SubmissionStatus_InitialState_IsSubmitted()
+    public void SubmissionStatus_InitialState_IsUnderReview()
     {
         var submission = new Submission {
             AssignmentId = 1,
             StudentEmail = "student@school.com",
             AnswerText = "Test Answer"
         };
-        Assert.Equal("Submitted", submission.Status);
+        Assert.Equal("UnderReview", submission.Status);
         Assert.Null(submission.Marks);
     }
 }

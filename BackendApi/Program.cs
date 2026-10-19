@@ -1,7 +1,10 @@
 using System.Text;
+using System.Threading.RateLimiting;
 using BackendApi.Data;
 using BackendApi.Services;
 using Microsoft.AspNetCore.Authentication.JwtBearer;
+using Microsoft.AspNetCore.HttpOverrides;
+using Microsoft.AspNetCore.RateLimiting;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.IdentityModel.Tokens;
 using Microsoft.OpenApi.Models;
@@ -14,20 +17,14 @@ public class Program
     public static async Task Main(string[] args)
     {
         var builder = WebApplication.CreateBuilder(args);
-        builder.Configuration.AddJsonFile(
-        "appsettings.Local.json",
-        optional: true,
-        reloadOnChange: true
-);
-        // 1. Configure Serilog API Logging
+
         Log.Logger = new LoggerConfiguration()
             .WriteTo.Console()
-            .WriteTo.File("logs/api-log-.txt", rollingInterval: RollingInterval.Day)
             .CreateLogger();
 
         builder.Host.UseSerilog();
+        builder.Services.AddProblemDetails();
 
-        // 2. Database Connection (Conditional for Testing Environment)
         if (builder.Environment.IsEnvironment("Testing"))
         {
             builder.Services.AddDbContext<AppDbContext>(options =>
@@ -35,15 +32,23 @@ public class Program
         }
         else
         {
+            var connectionString = builder.Configuration.GetConnectionString("DefaultConnection");
+            if (string.IsNullOrWhiteSpace(connectionString))
+            {
+                throw new InvalidOperationException(
+                    "ConnectionStrings:DefaultConnection is required. Configure it with environment variables or .NET user secrets.");
+            }
+
             builder.Services.AddDbContext<AppDbContext>(options =>
-                options.UseNpgsql(builder.Configuration.GetConnectionString("DefaultConnection")));
+                options.UseNpgsql(connectionString));
         }
 
         builder.Services.AddScoped<PasswordService>();
+        builder.Services.AddScoped<AccessControlService>();
         builder.Services.AddControllers();
         builder.Services.AddEndpointsApiExplorer();
+        builder.Services.AddHealthChecks();
 
-        // 3. Configure Swagger with JWT Bearer Support
         builder.Services.AddSwaggerGen(c =>
         {
             c.SwaggerDoc("v1", new OpenApiInfo
@@ -58,8 +63,9 @@ public class Program
                 Description = "JWT Authorization header using the Bearer scheme. Enter 'Bearer' [space] and then your token.",
                 Name = "Authorization",
                 In = ParameterLocation.Header,
-                Type = SecuritySchemeType.ApiKey,
-                Scheme = "Bearer"
+                Type = SecuritySchemeType.Http,
+                Scheme = "bearer",
+                BearerFormat = "JWT"
             });
 
             c.AddSecurityRequirement(new OpenApiSecurityRequirement
@@ -78,8 +84,24 @@ public class Program
             });
         });
 
-        // 4. Configure JWT Authentication
-        var jwtKey = builder.Configuration["Jwt:Key"] ?? "SuperSecretKeyForJWTTokenGeneration123456!";
+        var jwtKey = builder.Configuration["Jwt:Key"];
+        if (builder.Environment.IsEnvironment("Testing") && string.IsNullOrWhiteSpace(jwtKey))
+        {
+            jwtKey = "TestingOnlyJwtSigningKey-AtLeast-32-Bytes-Long";
+        }
+
+        if (string.IsNullOrWhiteSpace(jwtKey) || Encoding.UTF8.GetByteCount(jwtKey) < 32)
+        {
+            throw new InvalidOperationException("Jwt:Key is required and must contain at least 32 bytes of unpredictable data.");
+        }
+
+        var jwtIssuer = builder.Configuration["Jwt:Issuer"];
+        var jwtAudience = builder.Configuration["Jwt:Audience"];
+        if (string.IsNullOrWhiteSpace(jwtIssuer) || string.IsNullOrWhiteSpace(jwtAudience))
+        {
+            throw new InvalidOperationException("Jwt:Issuer and Jwt:Audience are required.");
+        }
+
         var key = Encoding.UTF8.GetBytes(jwtKey);
 
         builder.Services.AddAuthentication(JwtBearerDefaults.AuthenticationScheme)
@@ -89,24 +111,81 @@ public class Program
                 {
                     ValidateIssuerSigningKey = true,
                     IssuerSigningKey = new SymmetricSecurityKey(key),
-                    ValidateIssuer = false,
-                    ValidateAudience = false,
+                    ValidateIssuer = true,
+                    ValidIssuer = jwtIssuer,
+                    ValidateAudience = true,
+                    ValidAudience = jwtAudience,
+                    ValidateLifetime = true,
+                    RequireExpirationTime = true,
+                    RequireSignedTokens = true,
                     ClockSkew = TimeSpan.Zero
+                };
+
+                options.Events = new JwtBearerEvents
+                {
+                    OnTokenValidated = async context =>
+                    {
+                        var userIdValue = context.Principal?.FindFirst(System.Security.Claims.ClaimTypes.NameIdentifier)?.Value;
+                        var tokenVersionValue = context.Principal?.FindFirst("token_version")?.Value;
+
+                        if (!int.TryParse(userIdValue, out var userId) || !int.TryParse(tokenVersionValue, out var tokenVersion))
+                        {
+                            context.Fail("The access token is missing required claims.");
+                            return;
+                        }
+
+                        var db = context.HttpContext.RequestServices.GetRequiredService<AppDbContext>();
+                        var user = await db.Users.AsNoTracking().FirstOrDefaultAsync(u => u.Id == userId);
+                        var email = context.Principal?.FindFirst(System.Security.Claims.ClaimTypes.Email)?.Value;
+                        var role = context.Principal?.FindFirst(System.Security.Claims.ClaimTypes.Role)?.Value;
+
+                        if (user is null || user.TokenVersion != tokenVersion ||
+                            !string.Equals(user.Email, email, StringComparison.OrdinalIgnoreCase) ||
+                            !string.Equals(user.Role, role, StringComparison.Ordinal))
+                        {
+                            context.Fail("The access token is no longer valid.");
+                        }
+                    }
                 };
             });
 
         builder.Services.AddAuthorization();
 
-        // 5. Configure CORS
+        var allowedOrigins = builder.Configuration.GetSection("Cors:AllowedOrigins").Get<string[]>() ?? [];
+        if (allowedOrigins.Length == 0)
+        {
+            throw new InvalidOperationException("Cors:AllowedOrigins must contain at least one trusted frontend origin.");
+        }
+
         builder.Services.AddCors(options =>
         {
-            options.AddPolicy("AllowAll", policy =>
-                policy.AllowAnyOrigin().AllowAnyMethod().AllowAnyHeader());
+            options.AddPolicy("Frontend", policy => policy
+                .WithOrigins(allowedOrigins)
+                .WithMethods("GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS")
+                .WithHeaders("Authorization", "Content-Type"));
+        });
+
+        builder.Services.AddRateLimiter(options =>
+        {
+            options.RejectionStatusCode = StatusCodes.Status429TooManyRequests;
+            options.AddPolicy("login", httpContext => RateLimitPartition.GetFixedWindowLimiter(
+                partitionKey: httpContext.Connection.RemoteIpAddress?.ToString() ?? "unknown",
+                factory: _ => new FixedWindowRateLimiterOptions
+                {
+                    PermitLimit = 5,
+                    Window = TimeSpan.FromMinutes(1),
+                    QueueLimit = 0,
+                    AutoReplenishment = true
+                }));
+        });
+
+        builder.Services.Configure<ForwardedHeadersOptions>(options =>
+        {
+            options.ForwardedHeaders = ForwardedHeaders.XForwardedFor | ForwardedHeaders.XForwardedProto;
         });
 
         var app = builder.Build();
 
-        // 6. HTTP Request Pipeline Configuration
         if (app.Environment.IsDevelopment())
         {
             app.UseSwagger();
@@ -116,21 +195,49 @@ public class Program
                 c.RoutePrefix = "swagger";
             });
         }
+        else if (!app.Environment.IsEnvironment("Testing"))
+        {
+            app.UseHsts();
+        }
+
+        app.UseExceptionHandler();
+        app.UseForwardedHeaders();
+        if (!app.Environment.IsEnvironment("Testing"))
+        {
+            app.UseHttpsRedirection();
+        }
+
+        app.Use(async (context, next) =>
+        {
+            context.Response.Headers.XContentTypeOptions = "nosniff";
+            context.Response.Headers.XFrameOptions = "DENY";
+            context.Response.Headers["Referrer-Policy"] = "no-referrer";
+            context.Response.Headers["Permissions-Policy"] = "camera=(), microphone=(), geolocation=()";
+            await next();
+        });
 
         app.UseSerilogRequestLogging();
-        app.UseCors("AllowAll");
+        app.UseRateLimiter();
+        app.UseCors("Frontend");
         app.UseAuthentication();
         app.UseAuthorization();
         app.MapControllers();
+        app.MapHealthChecks("/health").AllowAnonymous();
 
-        // 7. Auto-seed Default Database on Startup (Skip during Testing)
         if (!app.Environment.IsEnvironment("Testing"))
         {
-            using (var scope = app.Services.CreateScope())
+            await using var scope = app.Services.CreateAsyncScope();
+            var db = scope.ServiceProvider.GetRequiredService<AppDbContext>();
+
+            if (builder.Configuration.GetValue<bool>("Database:MigrateOnStartup"))
             {
-                var db = scope.ServiceProvider.GetRequiredService<AppDbContext>();
+                await db.Database.MigrateAsync();
+            }
+
+            if (builder.Configuration.GetValue<bool>("SeedData:Enabled"))
+            {
                 var passwordService = scope.ServiceProvider.GetRequiredService<PasswordService>();
-                await DbSeeder.SeedAsync(db, passwordService);
+                await DbSeeder.SeedAsync(db, passwordService, builder.Configuration);
             }
         }
 

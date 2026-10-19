@@ -1,5 +1,7 @@
+using System.ComponentModel.DataAnnotations;
 using BackendApi.Data;
 using BackendApi.Models;
+using BackendApi.Security;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.EntityFrameworkCore;
@@ -19,28 +21,69 @@ public class SubjectsController : ControllerBase
     }
 
     [HttpGet]
-    public async Task<IActionResult> GetAll()
-    {
-        return Ok(await _db.Subjects.ToListAsync());
-    }
+    public async Task<IActionResult> GetAll(CancellationToken cancellationToken) => Ok(await _db.Subjects
+        .AsNoTracking()
+        .OrderBy(s => s.Code)
+        .ToListAsync(cancellationToken));
 
     [HttpPost]
-    [Authorize(Roles = "Admin")]
-    public async Task<IActionResult> Create([FromBody] Subject entity)
+    [Authorize(Roles = AppRoles.Admin)]
+    public async Task<IActionResult> Create([FromBody] UpsertSubjectDto dto, CancellationToken cancellationToken)
     {
+        var name = dto.Name.Trim();
+        var code = dto.Code.Trim().ToUpperInvariant();
+        if (await _db.Subjects.AnyAsync(s => s.Code == code, cancellationToken))
+        {
+            return Conflict(new { message = "This subject code already exists." });
+        }
+
+        var entity = new Subject { Name = name, Code = code };
         _db.Subjects.Add(entity);
-        await _db.SaveChangesAsync();
+        await _db.SaveChangesAsync(cancellationToken);
         return Ok(entity);
     }
 
-    [HttpDelete("{id}")]
-    [Authorize(Roles = "Admin")]
-    public async Task<IActionResult> Delete(int id)
+    [HttpPut("{id:int}")]
+    [Authorize(Roles = AppRoles.Admin)]
+    public async Task<IActionResult> Update(int id, [FromBody] UpsertSubjectDto dto, CancellationToken cancellationToken)
     {
-        var item = await _db.Subjects.FindAsync(id);
-        if (item == null) return NotFound();
-        _db.Subjects.Remove(item);
-        await _db.SaveChangesAsync();
+        var entity = await _db.Subjects.FindAsync([id], cancellationToken);
+        if (entity is null) return NotFound();
+
+        var code = dto.Code.Trim().ToUpperInvariant();
+        if (await _db.Subjects.AnyAsync(s => s.Id != id && s.Code == code, cancellationToken))
+        {
+            return Conflict(new { message = "This subject code already exists." });
+        }
+
+        entity.Name = dto.Name.Trim();
+        entity.Code = code;
+        await _db.SaveChangesAsync(cancellationToken);
+        return Ok(entity);
+    }
+
+    [HttpDelete("{id:int}")]
+    [Authorize(Roles = AppRoles.Admin)]
+    public async Task<IActionResult> Delete(int id, CancellationToken cancellationToken)
+    {
+        var entity = await _db.Subjects.FindAsync([id], cancellationToken);
+        if (entity is null) return NotFound();
+
+        var inUse = await _db.Assignments.AnyAsync(a => a.SubjectId == id, cancellationToken) ||
+                    await _db.TeacherAllocations.AnyAsync(a => a.SubjectId == id, cancellationToken);
+        if (inUse) return Conflict(new { message = "This subject is in use and cannot be deleted." });
+
+        _db.Subjects.Remove(entity);
+        await _db.SaveChangesAsync(cancellationToken);
         return Ok(new { message = "Subject deleted" });
     }
+}
+
+public sealed class UpsertSubjectDto
+{
+    [Required, StringLength(150, MinimumLength = 1)]
+    public string Name { get; init; } = string.Empty;
+
+    [Required, RegularExpression("^[A-Za-z0-9_-]{2,30}$")]
+    public string Code { get; init; } = string.Empty;
 }

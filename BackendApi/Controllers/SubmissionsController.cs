@@ -1,6 +1,8 @@
-using System.Security.Claims;
+using System.ComponentModel.DataAnnotations;
 using BackendApi.Data;
 using BackendApi.Models;
+using BackendApi.Security;
+using BackendApi.Services;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.EntityFrameworkCore;
@@ -13,96 +15,121 @@ namespace BackendApi.Controllers;
 public class SubmissionsController : ControllerBase
 {
     private readonly AppDbContext _db;
+    private readonly AccessControlService _access;
 
-    public SubmissionsController(AppDbContext db)
+    public SubmissionsController(AppDbContext db, AccessControlService access)
     {
         _db = db;
+        _access = access;
     }
 
     [HttpPost]
-    [Authorize(Roles = "Student")]
-    public async Task<IActionResult> SubmitAssignment([FromBody] CreateSubmissionDto dto)
+    [Authorize(Roles = AppRoles.Student)]
+    public async Task<IActionResult> SubmitAssignment([FromBody] CreateSubmissionDto dto, CancellationToken cancellationToken)
     {
-        var email = User.FindFirst(ClaimTypes.Email)?.Value 
-                 ?? User.FindFirst(ClaimTypes.Name)?.Value 
-                 ?? User.Identity?.Name;
+        var email = User.GetEmail();
+        if (string.IsNullOrWhiteSpace(email)) return Unauthorized();
 
-        var assignment = await _db.Assignments.FindAsync(dto.AssignmentId);
-        if (assignment == null) return NotFound(new { message = "Assignment not found." });
+        var assignment = await _db.Assignments.FindAsync([dto.AssignmentId], cancellationToken);
+        if (assignment is null) return NotFound(new { message = "Assignment not found." });
 
-        if (assignment.IsDraft) return BadRequest(new { message = "Cannot submit to a draft assignment." });
-
-        // 1. Deadline & Late Check
-        bool isLate = false;
-        if (assignment.DueDate.HasValue && DateTime.UtcNow > assignment.DueDate.Value)
+        if (!await _access.CanStudentAccessAssignmentAsync(email, assignment, cancellationToken))
         {
-            isLate = true;
-            var allowLateSetting = await _db.SystemSettings
-                .FirstOrDefaultAsync(s => s.Key == "AllowLateSubmissions");
-            bool allowLate = allowLateSetting == null || allowLateSetting.Value.ToLower() == "true";
+            return Forbid();
+        }
 
-            if (!allowLate)
+        var isLate = assignment.DueDate.HasValue && DateTime.UtcNow > assignment.DueDate.Value;
+        if (isLate)
+        {
+            var allowLateValue = await _db.SystemSettings
+                .Where(s => s.Key == "AllowLateSubmissions")
+                .Select(s => s.Value)
+                .SingleOrDefaultAsync(cancellationToken);
+
+            if (!bool.TryParse(allowLateValue, out var allowLate) || !allowLate)
             {
-                return BadRequest(new { message = "The deadline for this assignment has passed and late submissions are disabled." });
+                return BadRequest(new { message = "The deadline has passed and late submissions are disabled." });
             }
         }
 
-        // 2. Resubmission / Update Existing Submission
-        var existingSub = await _db.Submissions
-            .FirstOrDefaultAsync(s => s.AssignmentId == dto.AssignmentId && s.StudentEmail == email);
+        var existingSubmission = await _db.Submissions
+            .SingleOrDefaultAsync(s => s.AssignmentId == dto.AssignmentId && s.StudentEmail == email, cancellationToken);
 
-        if (existingSub != null)
+        if (existingSubmission is not null)
         {
-            existingSub.AnswerText = dto.AnswerText;
-            existingSub.SubmittedAt = DateTime.UtcNow;
-            existingSub.Status = isLate ? "Resubmitted (Late)" : "Resubmitted";
+            if (existingSubmission.Status is SubmissionStatuses.Graded or SubmissionStatuses.Rejected)
+            {
+                return Conflict(new { message = "A graded or rejected submission cannot be changed." });
+            }
 
-            await _db.SaveChangesAsync();
-            return Ok(existingSub);
+            existingSubmission.AnswerText = dto.AnswerText.Trim();
+            existingSubmission.SubmittedAt = DateTime.UtcNow;
+            existingSubmission.Status = SubmissionStatuses.UnderReview;
+            existingSubmission.IsLate = isLate;
+            existingSubmission.Marks = null;
+            existingSubmission.Feedback = null;
+
+            await _db.SaveChangesAsync(cancellationToken);
+            return Ok(existingSubmission);
         }
 
-        // 3. First-time Submission
-        var sub = new Submission
+        var submission = new Submission
         {
             AssignmentId = dto.AssignmentId,
-            AnswerText = dto.AnswerText,
-            StudentEmail = !string.IsNullOrEmpty(email) ? email : "student@school.com",
-            Status = isLate ? "Submitted (Late)" : "Submitted",
+            AnswerText = dto.AnswerText.Trim(),
+            StudentEmail = email,
+            Status = SubmissionStatuses.UnderReview,
+            IsLate = isLate,
             SubmittedAt = DateTime.UtcNow
         };
 
-        _db.Submissions.Add(sub);
-        await _db.SaveChangesAsync();
-        return Ok(sub);
+        _db.Submissions.Add(submission);
+        await _db.SaveChangesAsync(cancellationToken);
+        return Ok(submission);
     }
 
     [HttpGet("my")]
-    [Authorize(Roles = "Student")]
-    public async Task<IActionResult> GetMySubmissions()
+    [Authorize(Roles = AppRoles.Student)]
+    public async Task<IActionResult> GetMySubmissions(CancellationToken cancellationToken)
     {
-        var email = User.FindFirst(ClaimTypes.Email)?.Value 
-                 ?? User.FindFirst(ClaimTypes.Name)?.Value 
-                 ?? User.Identity?.Name;
+        var email = User.GetEmail();
+        if (string.IsNullOrWhiteSpace(email)) return Unauthorized();
 
-        var list = await _db.Submissions
+        var submissions = await _db.Submissions
+            .AsNoTracking()
             .Where(s => s.StudentEmail == email)
-            .ToListAsync();
+            .OrderByDescending(s => s.SubmittedAt)
+            .ToListAsync(cancellationToken);
 
-        return Ok(list);
+        return Ok(submissions);
     }
 
     [HttpGet]
-    [Authorize(Roles = "Teacher,Admin")]
-    public async Task<IActionResult> GetAllSubmissions([FromQuery] int page = 1, [FromQuery] int pageSize = 10)
+    [Authorize(Roles = $"{AppRoles.Teacher},{AppRoles.Admin}")]
+    public async Task<IActionResult> GetAllSubmissions(
+        [FromQuery, Range(1, int.MaxValue)] int page = 1,
+        [FromQuery, Range(1, 100)] int pageSize = 10,
+        CancellationToken cancellationToken = default)
     {
-        var query = _db.Submissions.AsQueryable();
+        var email = User.GetEmail();
+        var query = _db.Submissions.AsNoTracking().AsQueryable();
 
-        var totalItems = await query.CountAsync();
+        if (User.IsInRole(AppRoles.Teacher))
+        {
+            query = query.Where(s => s.Assignment != null &&
+                s.Assignment.ClassId != null && s.Assignment.SubjectId != null &&
+                _db.TeacherAllocations.Any(allocation =>
+                    allocation.TeacherEmail == email &&
+                    allocation.ClassId == s.Assignment.ClassId &&
+                    allocation.SubjectId == s.Assignment.SubjectId));
+        }
+
+        var totalItems = await query.CountAsync(cancellationToken);
         var items = await query
             .OrderByDescending(s => s.SubmittedAt)
             .Skip((page - 1) * pageSize)
             .Take(pageSize)
-            .ToListAsync();
+            .ToListAsync(cancellationToken);
 
         return Ok(new
         {
@@ -114,53 +141,73 @@ public class SubmissionsController : ControllerBase
         });
     }
 
-    [HttpPut("{id}/grade")]
-    [Authorize(Roles = "Teacher,Admin")]
-    public async Task<IActionResult> GradeSubmission(int id, [FromBody] GradeDto grade)
+    [HttpPut("{id:int}/grade")]
+    [Authorize(Roles = $"{AppRoles.Teacher},{AppRoles.Admin}")]
+    public async Task<IActionResult> GradeSubmission(int id, [FromBody] GradeDto grade, CancellationToken cancellationToken)
     {
-        var sub = await _db.Submissions
+        var submission = await _db.Submissions
             .Include(s => s.Assignment)
-            .FirstOrDefaultAsync(s => s.Id == id);
-            
-        if (sub == null) return NotFound();
+            .FirstOrDefaultAsync(s => s.Id == id, cancellationToken);
 
-        // Enforce business rule: Cannot grade beyond max marks
-        if (grade.Marks.HasValue && sub.Assignment != null && grade.Marks.Value > sub.Assignment.MaxMarks)
+        if (submission?.Assignment is null) return NotFound();
+        if (!await _access.CanManageAssignmentAsync(User, submission.Assignment, cancellationToken)) return Forbid();
+
+        if (grade.Marks > submission.Assignment.MaxMarks)
         {
-            return BadRequest(new { message = $"Marks cannot exceed the maximum allowed marks ({sub.Assignment.MaxMarks})." });
+            return BadRequest(new { message = $"Marks cannot exceed the maximum allowed marks ({submission.Assignment.MaxMarks})." });
         }
 
-        sub.Marks = grade.Marks;
-        sub.Feedback = grade.Feedback;
-        sub.Status = !string.IsNullOrEmpty(grade.Status) ? grade.Status : "Graded";
+        submission.Marks = grade.Marks;
+        submission.Feedback = grade.Feedback.Trim();
+        submission.Status = SubmissionStatuses.Graded;
 
-        await _db.SaveChangesAsync();
-        return Ok(sub);
+        await _db.SaveChangesAsync(cancellationToken);
+        return Ok(submission);
     }
 
-    [HttpPatch("{id}/status")]
-    [HttpPut("{id}/status")]
-    [Authorize(Roles = "Teacher,Admin")]
-    public async Task<IActionResult> UpdateSubmissionStatus(int id, [FromBody] UpdateStatusDto dto)
+    [HttpPatch("{id:int}/status")]
+    [HttpPut("{id:int}/status")]
+    [Authorize(Roles = $"{AppRoles.Teacher},{AppRoles.Admin}")]
+    public async Task<IActionResult> UpdateSubmissionStatus(int id, [FromBody] UpdateStatusDto dto, CancellationToken cancellationToken)
     {
-        var submission = await _db.Submissions.FindAsync(id);
-        if (submission == null)
-        {
-            return NotFound(new { message = "Submission not found" });
-        }
+        var submission = await _db.Submissions
+            .Include(s => s.Assignment)
+            .FirstOrDefaultAsync(s => s.Id == id, cancellationToken);
 
-        if (string.IsNullOrWhiteSpace(dto.Status))
+        if (submission?.Assignment is null) return NotFound(new { message = "Submission not found" });
+        if (!await _access.CanManageAssignmentAsync(User, submission.Assignment, cancellationToken)) return Forbid();
+        if (!SubmissionStatuses.TeacherReviewOutcomes.Contains(dto.Status))
         {
-            return BadRequest(new { message = "Status cannot be empty" });
+            return BadRequest(new { message = "Status must be Returned or Rejected. Use the grade endpoint to mark work as Graded." });
         }
 
         submission.Status = dto.Status;
-        await _db.SaveChangesAsync();
-
+        submission.Marks = null;
+        await _db.SaveChangesAsync(cancellationToken);
         return Ok(submission);
     }
 }
 
-public record CreateSubmissionDto(int AssignmentId, string AnswerText);
-public record GradeDto(int? Marks, string Feedback, string? Status);
-public record UpdateStatusDto(string Status);
+public sealed class CreateSubmissionDto
+{
+    [Range(1, int.MaxValue)]
+    public int AssignmentId { get; init; }
+
+    [Required, StringLength(50_000, MinimumLength = 1)]
+    public string AnswerText { get; init; } = string.Empty;
+}
+
+public sealed class GradeDto
+{
+    [Range(0, 10_000)]
+    public int Marks { get; init; }
+
+    [StringLength(5_000)]
+    public string Feedback { get; init; } = string.Empty;
+}
+
+public sealed class UpdateStatusDto
+{
+    [Required]
+    public string Status { get; init; } = string.Empty;
+}

@@ -1,6 +1,6 @@
-import React, { useState, useEffect } from 'react';
+import React, { useCallback, useEffect, useState } from 'react';
 
-const API_BASE = 'http://localhost:5000/api';
+const API_BASE = (import.meta.env.VITE_API_BASE_URL || '/api').replace(/\/$/, '');
 
 // Helper function to safely parse arrays from standard JSON or EF Core $values wrapping
 const parseArrayData = (data) => {
@@ -12,9 +12,9 @@ const parseArrayData = (data) => {
 
 export default function App() {
   // Authentication State
-  const [token, setToken] = useState(localStorage.getItem('token') || '');
-  const [role, setRole] = useState(localStorage.getItem('role') || '');
-  const [email, setEmail] = useState(localStorage.getItem('email') || '');
+  const [token, setToken] = useState(sessionStorage.getItem('token') || '');
+  const [role, setRole] = useState(sessionStorage.getItem('role') || '');
+  const [email, setEmail] = useState(sessionStorage.getItem('email') || '');
 
   const [loginEmail, setLoginEmail] = useState('');
   const [loginPassword, setLoginPassword] = useState('');
@@ -27,7 +27,7 @@ export default function App() {
   const [classList, setClassList] = useState([]);
   const [subjectList, setSubjectList] = useState([]);
   const [allocations, setAllocations] = useState([]);
-  const [settings, setSettings] = useState({ AcademicYear: '', AllowLateSubmissions: 'true' });
+  const [settings, setSettings] = useState({ AcademicYear: '', AllowLateSubmissions: 'false' });
 
   // Form States
   const [newUser, setNewUser] = useState({ email: '', password: '', role: 'Student', classId: '' });
@@ -54,9 +54,9 @@ export default function App() {
   // ---------------------------------------------------------------------------
   // API Fetch Functions
   // ---------------------------------------------------------------------------
-  const fetchAssignments = async () => {
+  const fetchAssignments = useCallback(async () => {
     try {
-      const res = await fetch(`${API_BASE}/assignments`, {
+      const res = await fetch(`${API_BASE}/assignments?pageSize=100`, {
         headers: { Authorization: `Bearer ${token}` }
       });
       if (res.ok) {
@@ -68,11 +68,11 @@ export default function App() {
     } catch {
       setAssignments([]);
     }
-  };
+  }, [token]);
 
-  const fetchSubmissions = async () => {
+  const fetchSubmissions = useCallback(async () => {
     try {
-      const endpoint = role === 'Student' ? `${API_BASE}/submissions/my` : `${API_BASE}/submissions`;
+      const endpoint = role === 'Student' ? `${API_BASE}/submissions/my` : `${API_BASE}/submissions?pageSize=100`;
       const res = await fetch(endpoint, {
         headers: { Authorization: `Bearer ${token}` }
       });
@@ -85,12 +85,12 @@ export default function App() {
     } catch {
       setSubmissions([]);
     }
-  };
+  }, [role, token]);
 
-  const fetchUsers = async () => {
+  const fetchUsers = useCallback(async () => {
     if (role !== 'Admin') return;
     try {
-      const res = await fetch(`${API_BASE}/users`, {
+      const res = await fetch(`${API_BASE}/users?pageSize=100`, {
         headers: { Authorization: `Bearer ${token}` }
       });
       if (res.ok) {
@@ -102,9 +102,9 @@ export default function App() {
     } catch {
       setUsersList([]);
     }
-  };
+  }, [role, token]);
 
-  const fetchClasses = async () => {
+  const fetchClasses = useCallback(async () => {
     try {
       const res = await fetch(`${API_BASE}/classes`, {
         headers: { Authorization: `Bearer ${token}` }
@@ -118,9 +118,9 @@ export default function App() {
     } catch {
       setClassList([]);
     }
-  };
+  }, [token]);
 
-  const fetchSubjects = async () => {
+  const fetchSubjects = useCallback(async () => {
     try {
       const res = await fetch(`${API_BASE}/subjects`, {
         headers: { Authorization: `Bearer ${token}` }
@@ -134,9 +134,9 @@ export default function App() {
     } catch {
       setSubjectList([]);
     }
-  };
+  }, [token]);
 
-  const fetchAllocations = async () => {
+  const fetchAllocations = useCallback(async () => {
     if (role !== 'Admin') return;
     try {
       const res = await fetch(`${API_BASE}/allocations`, {
@@ -151,25 +151,21 @@ export default function App() {
     } catch {
       setAllocations([]);
     }
-  };
+  }, [role, token]);
 
-  const fetchSettings = async () => {
+  const fetchSettings = useCallback(async () => {
     try {
       const res = await fetch(`${API_BASE}/settings`, {
         headers: { Authorization: `Bearer ${token}` }
       });
       if (res.ok) {
         const data = await res.json();
-        const settingsObj = {};
-        parseArrayData(data).forEach((item) => {
-          settingsObj[item.key] = item.value;
-        });
-        setSettings(settingsObj);
+        setSettings(data && !Array.isArray(data) ? data : {});
       }
     } catch {
       // Retain defaults if fetch fails
     }
-  };
+  }, [token]);
 
   // Load portal data when token or role changes
   useEffect(() => {
@@ -184,7 +180,7 @@ export default function App() {
         fetchAllocations();
       }
     }
-  }, [token, role]);
+  }, [token, role, fetchAssignments, fetchSubmissions, fetchClasses, fetchSubjects, fetchSettings, fetchUsers, fetchAllocations]);
 
   // ---------------------------------------------------------------------------
   // Event Handlers
@@ -203,9 +199,10 @@ export default function App() {
         setToken(data.token);
         setRole(data.role);
         setEmail(data.email);
-        localStorage.setItem('token', data.token);
-        localStorage.setItem('role', data.role);
-        localStorage.setItem('email', data.email);
+        sessionStorage.setItem('token', data.token);
+        sessionStorage.setItem('role', data.role);
+        sessionStorage.setItem('email', data.email);
+        sessionStorage.setItem('expiresAt', data.expiresAt);
       } else {
         setLoginError(data.message || 'Invalid login credentials');
       }
@@ -218,7 +215,10 @@ export default function App() {
     setToken('');
     setRole('');
     setEmail('');
-    localStorage.clear();
+    sessionStorage.removeItem('token');
+    sessionStorage.removeItem('role');
+    sessionStorage.removeItem('email');
+    sessionStorage.removeItem('expiresAt');
   };
 
   const handleCreateUser = async (e) => {
@@ -588,6 +588,7 @@ export default function App() {
                   placeholder="Email address"
                   value={newUser.email}
                   onChange={(e) => setNewUser({ ...newUser, email: e.target.value })}
+                  maxLength={254}
                   required
                   style={{ padding: '8px', border: '1px solid var(--border)', borderRadius: '4px' }}
                 />
@@ -596,6 +597,8 @@ export default function App() {
                   placeholder="Password"
                   value={newUser.password}
                   onChange={(e) => setNewUser({ ...newUser, password: e.target.value })}
+                  minLength={12}
+                  maxLength={128}
                   required
                   style={{ padding: '8px', border: '1px solid var(--border)', borderRadius: '4px' }}
                 />
@@ -613,6 +616,7 @@ export default function App() {
                   <select
                     value={newUser.classId}
                     onChange={(e) => setNewUser({ ...newUser, classId: e.target.value })}
+                    required
                     style={{ padding: '8px', border: '1px solid var(--border)', borderRadius: '4px' }}
                   >
                     <option value="">Select Enrolled Class</option>
@@ -694,6 +698,7 @@ export default function App() {
                     placeholder="Class Name (e.g. Class 10)"
                     value={newClass.name}
                     onChange={(e) => setNewClass({ ...newClass, name: e.target.value })}
+                    maxLength={100}
                     required
                     style={{ flex: 1, padding: '8px', border: '1px solid var(--border)', borderRadius: '4px', fontSize: '14px' }}
                   />
@@ -702,6 +707,7 @@ export default function App() {
                     placeholder="Section (e.g. A)"
                     value={newClass.section}
                     onChange={(e) => setNewClass({ ...newClass, section: e.target.value })}
+                    maxLength={50}
                     required
                     style={{ width: '90px', padding: '8px', border: '1px solid var(--border)', borderRadius: '4px', fontSize: '14px' }}
                   />
@@ -731,6 +737,7 @@ export default function App() {
                     placeholder="Subject Name (e.g. Physics)"
                     value={newSubject.name}
                     onChange={(e) => setNewSubject({ ...newSubject, name: e.target.value })}
+                    maxLength={150}
                     required
                     style={{ flex: 1, padding: '8px', border: '1px solid var(--border)', borderRadius: '4px', fontSize: '14px' }}
                   />
@@ -739,6 +746,9 @@ export default function App() {
                     placeholder="Code (e.g. PHY101)"
                     value={newSubject.code}
                     onChange={(e) => setNewSubject({ ...newSubject, code: e.target.value })}
+                    minLength={2}
+                    maxLength={30}
+                    pattern="[A-Za-z0-9_-]{2,30}"
                     required
                     style={{ width: '110px', padding: '8px', border: '1px solid var(--border)', borderRadius: '4px', fontSize: '14px' }}
                   />
@@ -852,7 +862,7 @@ export default function App() {
                     <div style={{ display: 'flex', gap: '8px' }}>
                       <select
                         style={{ flex: 1, padding: '8px', border: '1px solid var(--border)', borderRadius: '4px' }}
-                        value={settings.AllowLateSubmissions || 'true'}
+                        value={settings.AllowLateSubmissions || 'false'}
                         onChange={(e) => setSettings({ ...settings, AllowLateSubmissions: e.target.value })}
                       >
                         <option value="true">Enabled</option>
@@ -887,11 +897,15 @@ export default function App() {
                   placeholder="Title"
                   value={assignmentForm.title}
                   onChange={(e) => setAssignmentForm({ ...assignmentForm, title: e.target.value })}
+                  minLength={3}
+                  maxLength={200}
                   required
                   style={{ padding: '8px 12px', border: '1px solid var(--border)', borderRadius: '6px', fontSize: '14px' }}
                 />
                 <input
                   type="number"
+                  min="1"
+                  max="10000"
                   placeholder="Max Marks"
                   value={assignmentForm.maxMarks}
                   onChange={(e) => setAssignmentForm({ ...assignmentForm, maxMarks: e.target.value })}
@@ -939,6 +953,7 @@ export default function App() {
                 rows={3}
                 value={assignmentForm.description}
                 onChange={(e) => setAssignmentForm({ ...assignmentForm, description: e.target.value })}
+                maxLength={10000}
                 style={{ padding: '8px 12px', border: '1px solid var(--border)', borderRadius: '6px', fontSize: '14px', resize: 'vertical' }}
               />
 
@@ -1260,6 +1275,7 @@ export default function App() {
                 required
                 value={submitModal.answerText}
                 onChange={(e) => setSubmitModal({ ...submitModal, answerText: e.target.value })}
+                maxLength={50000}
                 style={{ width: '100%', padding: '10px', border: '1px solid var(--border)', borderRadius: '6px', fontSize: '14px', marginBottom: '16px' }}
               />
               <div style={{ display: 'flex', justifyContent: 'flex-end', gap: '8px' }}>

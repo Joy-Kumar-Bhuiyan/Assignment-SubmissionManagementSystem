@@ -1,6 +1,8 @@
-using System.Security.Claims;
+using System.ComponentModel.DataAnnotations;
 using BackendApi.Data;
 using BackendApi.Models;
+using BackendApi.Security;
+using BackendApi.Services;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.EntityFrameworkCore;
@@ -13,36 +15,50 @@ namespace BackendApi.Controllers;
 public class AssignmentsController : ControllerBase
 {
     private readonly AppDbContext _db;
+    private readonly AccessControlService _access;
 
-    public AssignmentsController(AppDbContext db)
+    public AssignmentsController(AppDbContext db, AccessControlService access)
     {
         _db = db;
+        _access = access;
     }
 
     [HttpGet]
-    public async Task<IActionResult> GetAllAssignments([FromQuery] int page = 1, [FromQuery] int pageSize = 10)
+    public async Task<IActionResult> GetAllAssignments(
+        [FromQuery, Range(1, int.MaxValue)] int page = 1,
+        [FromQuery, Range(1, 100)] int pageSize = 10,
+        CancellationToken cancellationToken = default)
     {
-        var userRole = User.FindFirst(ClaimTypes.Role)?.Value ?? "";
-        var email = User.FindFirst(ClaimTypes.Email)?.Value 
-                 ?? User.FindFirst(ClaimTypes.Name)?.Value 
-                 ?? User.Identity?.Name;
-
+        var email = User.GetEmail();
         var query = _db.Assignments
+            .AsNoTracking()
             .Include(a => a.Class)
             .Include(a => a.Subject)
             .AsQueryable();
 
-        // Students can only see published assignments assigned to their class (or General)
-        if (userRole == "Student")
+        if (User.IsInRole(AppRoles.Student))
         {
-            var student = await _db.Users.FirstOrDefaultAsync(u => u.Email == email);
-            int? studentClassId = student?.ClassId;
+            var studentClassId = await _db.Users
+                .Where(u => u.Email == email && u.Role == AppRoles.Student)
+                .Select(u => u.ClassId)
+                .SingleOrDefaultAsync(cancellationToken);
 
-            // Hide drafts and only show assignments targeted to the student's class (or general assignments)
             query = query.Where(a => !a.IsDraft && (a.ClassId == null || a.ClassId == studentClassId));
         }
+        else if (User.IsInRole(AppRoles.Teacher))
+        {
+            query = query.Where(a => a.ClassId != null && a.SubjectId != null &&
+                _db.TeacherAllocations.Any(allocation =>
+                    allocation.TeacherEmail == email &&
+                    allocation.ClassId == a.ClassId &&
+                    allocation.SubjectId == a.SubjectId));
+        }
+        else if (!User.IsInRole(AppRoles.Admin))
+        {
+            return Forbid();
+        }
 
-        var totalItems = await query.CountAsync();
+        var totalItems = await query.CountAsync(cancellationToken);
         var items = await query
             .OrderByDescending(a => a.CreatedDate)
             .Skip((page - 1) * pageSize)
@@ -61,7 +77,7 @@ public class AssignmentsController : ControllerBase
                 a.SubjectId,
                 SubjectName = a.Subject != null ? a.Subject.Name : "General"
             })
-            .ToListAsync();
+            .ToListAsync(cancellationToken);
 
         return Ok(new
         {
@@ -73,42 +89,29 @@ public class AssignmentsController : ControllerBase
         });
     }
 
-    // -------------------------------------------------------------
-    // 1. GET SINGLE ASSIGNMENT DETAIL
-    // -------------------------------------------------------------
-    [HttpGet("{id}")]
-    public async Task<IActionResult> GetAssignmentById(int id)
+    [HttpGet("{id:int}")]
+    public async Task<IActionResult> GetAssignmentById(int id, CancellationToken cancellationToken)
     {
-        var userRole = User.FindFirst(ClaimTypes.Role)?.Value ?? "";
-        var email = User.FindFirst(ClaimTypes.Email)?.Value 
-                 ?? User.FindFirst(ClaimTypes.Name)?.Value 
-                 ?? User.Identity?.Name;
-
         var assignment = await _db.Assignments
+            .AsNoTracking()
             .Include(a => a.Class)
             .Include(a => a.Subject)
-            .FirstOrDefaultAsync(a => a.Id == id);
+            .FirstOrDefaultAsync(a => a.Id == id, cancellationToken);
 
-        if (assignment == null)
+        if (assignment is null) return NotFound(new { message = "Assignment not found." });
+
+        if (User.IsInRole(AppRoles.Student))
         {
-            return NotFound(new { message = "Assignment not found." });
+            var email = User.GetEmail();
+            if (string.IsNullOrWhiteSpace(email) ||
+                !await _access.CanStudentAccessAssignmentAsync(email, assignment, cancellationToken))
+            {
+                return Forbid();
+            }
         }
-
-        // Student Access Rules: Must be published AND match their class (or be General)
-        if (userRole == "Student")
+        else if (!await _access.CanManageAssignmentAsync(User, assignment, cancellationToken))
         {
-            if (assignment.IsDraft)
-            {
-                return Forbid();
-            }
-
-            var student = await _db.Users.FirstOrDefaultAsync(u => u.Email == email);
-            int? studentClassId = student?.ClassId;
-
-            if (assignment.ClassId != null && assignment.ClassId != studentClassId)
-            {
-                return Forbid();
-            }
+            return Forbid();
         }
 
         return Ok(new
@@ -123,100 +126,130 @@ public class AssignmentsController : ControllerBase
             assignment.ClassId,
             ClassName = assignment.Class != null ? $"{assignment.Class.Name} ({assignment.Class.Section})" : "General",
             assignment.SubjectId,
-            SubjectName = assignment.Subject != null ? assignment.Subject.Name : "General"
+            SubjectName = assignment.Subject?.Name ?? "General"
         });
     }
 
     [HttpPost]
-    [Authorize(Roles = "Teacher,Admin")]
-    public async Task<IActionResult> CreateAssignment([FromBody] UpsertAssignmentDto dto)
+    [Authorize(Roles = $"{AppRoles.Teacher},{AppRoles.Admin}")]
+    public async Task<IActionResult> CreateAssignment([FromBody] UpsertAssignmentDto dto, CancellationToken cancellationToken)
     {
+        var targetError = await ValidateTargetAsync(dto.ClassId, dto.SubjectId, cancellationToken);
+        if (targetError is not null) return targetError;
+
         var assignment = new Assignment
         {
-            Title = dto.Title,
-            Description = dto.Description,
+            Title = dto.Title.Trim(),
+            Description = dto.Description.Trim(),
             MaxMarks = dto.MaxMarks,
-            DueDate = dto.DueDate.HasValue 
-                ? DateTime.SpecifyKind(dto.DueDate.Value, DateTimeKind.Utc) 
-                : DateTime.UtcNow.AddDays(7),
+            DueDate = dto.DueDate?.ToUniversalTime() ?? DateTime.UtcNow.AddDays(7),
             CreatedDate = DateTime.UtcNow,
             IsDraft = dto.IsDraft,
             ClassId = dto.ClassId,
             SubjectId = dto.SubjectId
         };
 
-        _db.Assignments.Add(assignment);
-        await _db.SaveChangesAsync();
+        if (!await _access.CanManageAssignmentAsync(User, assignment, cancellationToken)) return Forbid();
 
+        _db.Assignments.Add(assignment);
+        await _db.SaveChangesAsync(cancellationToken);
         return Ok(assignment);
     }
 
-    [HttpPut("{id}")]
-    [Authorize(Roles = "Teacher,Admin")]
-    public async Task<IActionResult> UpdateAssignment(int id, [FromBody] UpsertAssignmentDto dto)
+    [HttpPut("{id:int}")]
+    [Authorize(Roles = $"{AppRoles.Teacher},{AppRoles.Admin}")]
+    public async Task<IActionResult> UpdateAssignment(int id, [FromBody] UpsertAssignmentDto dto, CancellationToken cancellationToken)
     {
-        var assignment = await _db.Assignments.FindAsync(id);
-        if (assignment == null) return NotFound();
+        var assignment = await _db.Assignments.FindAsync([id], cancellationToken);
+        if (assignment is null) return NotFound();
+        if (!await _access.CanManageAssignmentAsync(User, assignment, cancellationToken)) return Forbid();
 
-        assignment.Title = dto.Title;
-        assignment.Description = dto.Description;
+        var targetError = await ValidateTargetAsync(dto.ClassId, dto.SubjectId, cancellationToken);
+        if (targetError is not null) return targetError;
+
+        var proposedTarget = new Assignment { ClassId = dto.ClassId, SubjectId = dto.SubjectId };
+        if (!await _access.CanManageAssignmentAsync(User, proposedTarget, cancellationToken)) return Forbid();
+
+        assignment.Title = dto.Title.Trim();
+        assignment.Description = dto.Description.Trim();
         assignment.MaxMarks = dto.MaxMarks;
-        if (dto.DueDate.HasValue)
-        {
-            assignment.DueDate = DateTime.SpecifyKind(dto.DueDate.Value, DateTimeKind.Utc);
-        }
+        assignment.DueDate = dto.DueDate?.ToUniversalTime() ?? assignment.DueDate;
         assignment.IsDraft = dto.IsDraft;
         assignment.ClassId = dto.ClassId;
         assignment.SubjectId = dto.SubjectId;
 
-        await _db.SaveChangesAsync();
+        await _db.SaveChangesAsync(cancellationToken);
         return Ok(assignment);
     }
 
-    [HttpDelete("{id}")]
-    [Authorize(Roles = "Teacher,Admin")]
-    public async Task<IActionResult> DeleteAssignment(int id)
+    [HttpDelete("{id:int}")]
+    [Authorize(Roles = $"{AppRoles.Teacher},{AppRoles.Admin}")]
+    public async Task<IActionResult> DeleteAssignment(int id, CancellationToken cancellationToken)
     {
-        var assignment = await _db.Assignments.FindAsync(id);
-        if (assignment == null) return NotFound();
-
-        var relatedSubmissions = _db.Submissions.Where(s => s.AssignmentId == id);
-        _db.Submissions.RemoveRange(relatedSubmissions);
+        var assignment = await _db.Assignments.FindAsync([id], cancellationToken);
+        if (assignment is null) return NotFound();
+        if (!await _access.CanManageAssignmentAsync(User, assignment, cancellationToken)) return Forbid();
 
         _db.Assignments.Remove(assignment);
-        await _db.SaveChangesAsync();
-
+        await _db.SaveChangesAsync(cancellationToken);
         return Ok(new { message = "Assignment deleted" });
     }
 
-    // -------------------------------------------------------------
-    // 2. GET SUBMISSIONS FOR A SPECIFIC ASSIGNMENT
-    // -------------------------------------------------------------
-    [HttpGet("{id}/submissions")]
-    [Authorize(Roles = "Teacher,Admin")]
-    public async Task<IActionResult> GetAssignmentSubmissions(int id)
+    [HttpGet("{id:int}/submissions")]
+    [Authorize(Roles = $"{AppRoles.Teacher},{AppRoles.Admin}")]
+    public async Task<IActionResult> GetAssignmentSubmissions(int id, CancellationToken cancellationToken)
     {
-        var assignmentExists = await _db.Assignments.AnyAsync(a => a.Id == id);
-        if (!assignmentExists)
-        {
-            return NotFound(new { message = "Assignment not found." });
-        }
+        var assignment = await _db.Assignments.FindAsync([id], cancellationToken);
+        if (assignment is null) return NotFound(new { message = "Assignment not found." });
+        if (!await _access.CanManageAssignmentAsync(User, assignment, cancellationToken)) return Forbid();
 
         var submissions = await _db.Submissions
+            .AsNoTracking()
             .Where(s => s.AssignmentId == id)
             .OrderByDescending(s => s.SubmittedAt)
-            .ToListAsync();
+            .ToListAsync(cancellationToken);
 
         return Ok(submissions);
     }
+
+    private async Task<IActionResult?> ValidateTargetAsync(int? classId, int? subjectId, CancellationToken cancellationToken)
+    {
+        if (User.IsInRole(AppRoles.Teacher) && (classId is null || subjectId is null))
+        {
+            return BadRequest(new { message = "Teachers must select both an allocated class and subject." });
+        }
+
+        if (classId is not null && !await _db.Classes.AnyAsync(c => c.Id == classId, cancellationToken))
+        {
+            return BadRequest(new { message = "The selected class does not exist." });
+        }
+
+        if (subjectId is not null && !await _db.Subjects.AnyAsync(s => s.Id == subjectId, cancellationToken))
+        {
+            return BadRequest(new { message = "The selected subject does not exist." });
+        }
+
+        return null;
+    }
 }
 
-public record UpsertAssignmentDto(
-    string Title,
-    string Description,
-    int MaxMarks,
-    DateTime? DueDate,
-    bool IsDraft,
-    int? ClassId,
-    int? SubjectId
-);
+public sealed class UpsertAssignmentDto
+{
+    [Required, StringLength(200, MinimumLength = 3)]
+    public string Title { get; init; } = string.Empty;
+
+    [StringLength(10_000)]
+    public string Description { get; init; } = string.Empty;
+
+    [Range(1, 10_000)]
+    public int MaxMarks { get; init; }
+
+    public DateTime? DueDate { get; init; }
+    public bool IsDraft { get; init; }
+
+    [Range(1, int.MaxValue)]
+    public int? ClassId { get; init; }
+
+    [Range(1, int.MaxValue)]
+    public int? SubjectId { get; init; }
+}

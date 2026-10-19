@@ -1,292 +1,173 @@
 # Assignment & Submission Management System
 
-A role-based school/college assignment platform built for the OnnoRokom Projukti Limited Assistant Software Engineer recruitment project. It models a real academic workflow: admins set up the structure, teachers create and grade assignments, and students submit work and track their results — with every rule enforced on the backend, not just hidden in the UI.
+A security-focused, role-based assignment platform for schools and colleges. Admins manage the academic structure, teachers work only within their allocated classes and subjects, and students see and submit only the work assigned to their class.
 
-**Stack:** ASP.NET Core Web API (C#) · React + Vite · PostgreSQL · JWT Auth
+**Stack:** ASP.NET Core 10 · Entity Framework Core · PostgreSQL · React 19 · Vite · JWT bearer authentication · xUnit
 
----
+## What makes this project strong
 
-## Why I built it this way
+- Authorization is enforced in the API, including teacher allocation and student class boundaries.
+- JWT signatures, issuer, audience, lifetime, and per-user token version are validated.
+- Passwords use BCrypt with an explicit work factor; password or role changes revoke existing sessions.
+- Login attempts are rate-limited and unknown-account checks use a dummy hash to reduce timing leakage.
+- CORS accepts only configured frontend origins; HTTPS redirection, HSTS, security headers, bounded pagination, and centralized error responses are enabled.
+- Request DTOs enforce email, password, text-length, marks, ID, and status constraints.
+- Database constraints prevent duplicate accounts, allocations, submissions, classes, subjects, and settings.
+- CI builds both applications, runs the backend regression suite, lints the frontend, and audits dependencies. NuGet advisories are treated as build errors; CodeQL and Dependabot are configured.
 
-The brief asked for more than CRUD — it asked for a system where roles actually matter and business rules can't be bypassed by hitting the API directly. So I focused on:
+## Roles and enforced boundaries
 
-- Enforcing every permission check server-side (a hidden button isn't security)
-- Modeling submissions as a real state machine, not a boolean flag
-- Writing tests around the rules that actually matter — authorization, grading limits, deadlines
-- Keeping the setup dead simple, so anyone can clone this and have it running in a few minutes
+| Role | Permissions |
+|---|---|
+| Admin | Manage users, classes, subjects, allocations, settings, assignments, and submissions |
+| Teacher | View and manage assignments/submissions only for allocated class-subject pairs |
+| Student | View published assignments for their class, submit their own work, and view only their submissions |
 
----
+Submission states follow this workflow:
 
-## Roles & Responsibilities
-
-**Admin** — manages users, classes/courses, subjects, and assigns teachers to subjects/classes. Can view all assignments and submissions across the system.
-
-**Teacher** — creates, updates, and deletes assignments; assigns each one to a specific class/course and subject; sets title, description, deadline, and max marks; publishes or keeps as draft; reviews submissions; assigns marks and feedback; updates submission status.
-
-**Student** — views assignments for their own class/course; sees details and deadlines; submits an answer; updates a submission before the deadline (if allowed); views their own status, marks, and feedback.
-
-```
-Admin
-  └─ users · classes · subjects · teacher allocation
-        │
-        ▼
-     Teacher
-        └─ create → draft → publish → review → grade
-              │
-              ▼
-           Student
-              └─ view → submit → update → check results
+```text
+UnderReview -> Graded
+UnderReview -> Returned -> UnderReview
+UnderReview -> Rejected
 ```
 
----
+Graded and rejected work cannot be silently overwritten. Marks must be between zero and the assignment maximum.
 
-## Submission Workflow
+## Project structure
 
-A submission isn't just "submitted" — it moves through real states:
-
-```
-UnderReview → Graded
-UnderReview → Returned → (student updates before deadline) → UnderReview
-UnderReview → Rejected
-```
-
-This felt closer to how grading actually works — a teacher can send work back for revision instead of only accepting or rejecting it outright.
-
----
-
-## Business Rules (enforced server-side)
-
-- A student only sees assignments for their own class/course.
-- A student can't access or edit another student's submission.
-- A teacher can only manage assignments/submissions within their allocated class/subject.
-- Marks can never exceed an assignment's maximum marks.
-- Submission edits are blocked once the deadline passes.
-- Every protected endpoint checks the caller's role and ownership before acting.
-
-Try hitting a teacher-only endpoint in Swagger while logged in as a student — you'll get blocked exactly where you'd expect, because these checks live in the API, not the frontend.
-
----
-
-## Assumptions
-
-The brief left some details open to interpretation. Here's what I assumed, and why:
-
-- **Frontend stack:** used **React + Vite (JavaScript)** instead of Next.js/TypeScript. I treated this as an equivalent technology per the brief's note that applicants may substitute suitable alternatives — Vite gave a faster iteration loop for a project this size, and I prioritized getting the role-based logic and backend rules right over the specific frontend framework. *(If TypeScript/Next.js is a hard requirement, happy to discuss or follow up with a migration.)*
-- **Submission editing window:** a student can only update a submission while it's `UnderReview` or `Returned` — not after it's been `Graded` or `Rejected`, and never after the deadline.
-- **Draft assignments:** a draft assignment is invisible to students entirely; only published assignments appear in a student's list.
-- **Marks validation:** marks are validated against the assignment's max marks at the API level, regardless of what the frontend sends.
-- **Class/course model:** modeled as a single `Class` entity tied to both students and subject allocations, rather than separating "class" and "course" as distinct concepts, since the brief uses them interchangeably.
-- **File uploads:** a max file size setting (`MaxFileSizeMB`) is included in configuration to support assignment/submission attachments. *(Note: confirm and describe the actual current state of file upload support here based on what's implemented.)*
-
----
-
-## Tech Stack
-
-| Layer     | Technology                                          |
-|-----------|-----------------------------------------------------|
-| Frontend  | React, Vite, JavaScript, HTML5, CSS3                |
-| Backend   | C#, ASP.NET Core Web API, Entity Framework Core     |
-| Auth      | JWT, role-based authorization                       |
-| Database  | PostgreSQL                                          |
-| API Docs  | Swagger / OpenAPI                                   |
-| Testing   | xUnit, FluentAssertions, EF Core In-Memory provider |
-
----
-
-## Architecture
-
-```
-React (Vite)  →  HTTP/REST  →  ASP.NET Core Web API  →  EF Core  →  PostgreSQL
-                                 (JWT + role checks)
+```text
+BackendApi/             ASP.NET Core API, EF Core model, and migrations
+BackendApi.Tests/       Authorization and workflow regression tests
+FrontendWeb/            React/Vite single-page application
+.github/workflows/      CI and CodeQL security scanning
+docs/SECURITY_AUDIT.md  Findings, fixes, remaining risks, and deployment checklist
+.env.example            Environment-variable reference (never put real secrets here)
 ```
 
----
+## Local setup
 
-## Project Structure
+### Prerequisites
 
-```
-Assignment-Submission-Management-System/
-├── BackendApi/          → Controllers, Services, Models, Migrations
-├── FrontendWeb/          → React app (Vite)
-├── BackendApi.Tests/     → xUnit test suite
-├── .env.example           → required environment variables (see below)
-├── start-app.bat         → runs both projects together
-└── README.md
-```
+- .NET SDK 10
+- Node.js 24 or newer
+- PostgreSQL
 
----
+### 1. Configure backend secrets
 
-## Environment Variables
+ASP.NET Core does **not** automatically import a local `.env` file. For development, use .NET User Secrets:
 
-Copy `.env.example` and fill in your own local values — never commit real secrets.
-
-```dotenv
-# Server Port
-PORT=5000
-
-# PostgreSQL Database Connection String
-ConnectionStrings__DefaultConnection="Host=localhost;Database=YourDatabase;Username=YourUsername;Password=YourPassword"
-
-# JWT Token Security Settings
-Jwt__Key="ChangeMeToAStrongRandomKey"
-Jwt__Issuer="BackendApi"
-Jwt__Audience="FrontendWeb"
-
-# File Upload Settings
-MaxFileSizeMB=10
-```
-
-For local development, these same values can also be set via **.NET User Secrets** instead of a real `.env` file:
-
-```bash
+```powershell
 cd BackendApi
-dotnet user-secrets init
-dotnet user-secrets set "ConnectionStrings:DefaultConnection" "Host=localhost;Database=YourDatabase;Username=YourUsername;Password=YourPassword"
-dotnet user-secrets set "Jwt:Key" "YourLongRandomSecret"
+dotnet user-secrets set "ConnectionStrings:DefaultConnection" "Host=localhost;Database=SchoolDb;Username=postgres;Password=YOUR_DATABASE_PASSWORD"
+dotnet user-secrets set "Jwt:Key" "YOUR_RANDOM_SIGNING_KEY_WITH_AT_LEAST_32_BYTES"
 ```
 
----
+Generate a signing key with a cryptographically secure tool, for example:
 
-## Running It Locally
-
-**Prerequisites:** .NET SDK, Node.js, PostgreSQL, Git
-
-```bash
-dotnet --version
-node --version
-npm --version
-git --version
+```powershell
+openssl rand -base64 48
 ```
 
-### 1. Clone the repo
-```bash
-git clone https://github.com/Joy-Kumar-Bhuiyan/Assignment-SubmissionManagementSystem
-cd Assignment-Submission-Management-System
-```
+For hosted environments, use the platform's secret manager and the variable names shown in `.env.example`.
 
-### 2. Set up the database
-Create a local PostgreSQL database matching your `.env` values, or use the defaults above.
+### 2. Create the database schema
 
-### 3. Configure secrets
-Use `.env.example` as a reference, or set up User Secrets as shown above.
-
-### 4. Install & migrate
-```bash
-cd BackendApi
-dotnet restore
+```powershell
 dotnet ef database update
 ```
-This creates the schema **and** runs the seed data — no manual table creation or data entry needed. Demo accounts for all three roles are seeded automatically (see below).
 
-### 5. Run the backend
-```bash
-dotnet run
+Database migration on application startup is disabled by default. This is safer for production and makes schema changes explicit.
+
+### 3. Optional demo accounts
+
+Demo seeding is opt-in and requires your own passwords:
+
+```powershell
+dotnet user-secrets set "SeedData:Enabled" "true"
+dotnet user-secrets set "SeedData:AdminPassword" "YOUR_UNIQUE_ADMIN_PASSWORD"
+dotnet user-secrets set "SeedData:TeacherPassword" "YOUR_UNIQUE_TEACHER_PASSWORD"
+dotnet user-secrets set "SeedData:StudentPassword" "YOUR_UNIQUE_STUDENT_PASSWORD"
 ```
-Swagger UI: `http://localhost:5000/swagger`
 
-### 6. Run the frontend
-```bash
-cd ../FrontendWeb
-npm install
+The seeded emails are `admin@school.com`, `teacher@school.com`, and `student@school.com`. Never enable demo seeding on a public deployment.
+
+### 4. Run the API
+
+```powershell
+dotnet dev-certs https --trust
+dotnet run --launch-profile https
+```
+
+- Swagger: `https://localhost:5001/swagger`
+- Health check: `https://localhost:5001/health`
+
+### 5. Run the frontend
+
+Open another terminal:
+
+```powershell
+cd FrontendWeb
+npm ci
 npm run dev
 ```
-Frontend: `http://localhost:5173`
 
-> Or just run `start-app.bat` to launch both at once.
+Open `http://localhost:5173`. Vite proxies `/api` to the local HTTPS backend. For a separately hosted API, set `VITE_API_BASE_URL` at frontend build time and add the frontend origin to `Cors__AllowedOrigins`.
 
----
+## Tests and quality checks
 
-## API Reference
+From the repository root:
 
-```
-POST   /api/auth/login              → authenticate, returns JWT
-
-GET    /api/assignments             → list (scoped by role)
-POST   /api/assignments             → create (teacher only)
-PUT    /api/assignments/{id}        → update (teacher only)
-DELETE /api/assignments/{id}        → delete (teacher only)
-
-GET    /api/submissions             → list (scoped by role)
-POST   /api/submissions             → submit work (student)
-PUT    /api/submissions/{id}        → update before deadline (student)
-PUT    /api/submissions/{id}/grade  → grade + feedback (teacher only)
+```powershell
+dotnet test BackendApi.Tests/BackendApi.Tests.csproj
+cd FrontendWeb
+npm ci
+npm run lint
+npm run build
+npm audit
 ```
 
-Every protected request requires:
-```
-Authorization: Bearer <token>
-```
+The backend suite covers role authorization, allocation boundaries, cross-class submission blocking, deadline enforcement, immutable graded work, marks validation, status validation, bounded pagination, and the complete submit-resubmit-grade workflow.
 
-Full request/response schemas and live testing are available through Swagger.
+## API overview
 
----
+```text
+POST   /api/auth/login
 
-## Demo Accounts
+GET    /api/assignments
+GET    /api/assignments/{id}
+POST   /api/assignments
+PUT    /api/assignments/{id}
+DELETE /api/assignments/{id}
 
-> ⚠️ Fill in your real seeded credentials here before submitting — the evaluator will log in with these directly.
+GET    /api/submissions
+GET    /api/submissions/my
+POST   /api/submissions
+PUT    /api/submissions/{id}/grade
+PUT    /api/submissions/{id}/status
 
-| Role    | Email               | Password              |
-|---------|---------------------|-----------------------|
-| Admin   | admin@school.com    | AdminPassword123!     |
-| Teacher | teacher@school.com  | TeacherPassword123!   |
-| Student | student@school.com  | StudentPassword123!   |
-
-These accounts are seeded automatically on `dotnet ef database update` / first run — no manual setup needed. Passwords are simple by design for local evaluation only and should never be reused in production.
-
----
-
-## Testing
-
-```bash
-cd BackendApi.Tests
-dotnet test
+GET/POST/PUT/DELETE /api/users
+GET/POST/PUT/DELETE /api/classes
+GET/POST/PUT/DELETE /api/subjects
+GET/POST/DELETE     /api/allocations
+GET/POST            /api/settings
 ```
 
-Tests focus on what actually breaks a system like this if it's wrong:
-- Authentication & role-based authorization
-- Assignment visibility rules per role
-- Submission creation, updates, and deadline restrictions
-- Grading rules and invalid-marks rejection
-- Cross-role/cross-user access restrictions
+Swagger provides the complete request and response schemas. Protected calls require `Authorization: Bearer <token>`.
 
-Runs against EF Core's in-memory provider — no live database required to run the suite.
+## Production checklist
 
----
+- Read [the security audit](docs/SECURITY_AUDIT.md), especially the mandatory secret-rotation and Git-history steps.
+- Set a unique random JWT key, database password, allowed host, and exact HTTPS frontend origin.
+- Keep `SeedData__Enabled=false` and run migrations as a controlled deployment step.
+- Put the API behind a trusted TLS reverse proxy and configure forwarded-header trust for that proxy.
+- Use a managed PostgreSQL account with least privileges, encrypted backups, and network restrictions.
+- Review GitHub CodeQL, Dependabot, and CI results before merging.
 
-## Implementation Notes
+## Known product limitations
 
-- **UTC everywhere on the backend** — deadlines are stored and compared in UTC; the frontend converts to the user's local time for display. This avoids the classic bug where a deadline looks "already passed" the moment it's created due to timezone mismatch.
-- **Backend validation is the real boundary** — the frontend validates for UX, but every rule that matters (ownership, deadlines, max marks) is re-checked server-side regardless of what the client sends.
-- **CORS** — configured so the Vite dev server (`5173`) can talk to the API (`5000`) in local development.
+- Access tokens are short-lived and there is no refresh-token flow yet.
+- Browser tokens use session storage; an HttpOnly same-site cookie design would provide stronger XSS resistance.
+- Rate limiting is per application instance; multi-instance production should enforce limits at a gateway or shared store.
+- File attachments, notifications, password recovery, MFA, and audit-event persistence are not implemented.
 
----
-
-## Known Limitations
-
-- No email notifications or automated deadline reminders
-- No refresh token flow — JWT expires and requires re-login
-- No CI/CD pipeline or production deployment configuration
-- Limited reporting/analytics (no dashboard beyond core role views)
-- Pagination and advanced filtering not yet implemented
-
-## Possible Future Improvements
-
-- Assignment and submission file attachments (config for this already exists — see `.env.example`)
-- Refresh token support
-- Docker Compose for one-command setup
-- Deployed live demo (Render/Railway) alongside the local setup
-- Teacher/admin dashboard with basic analytics
-
----
-
-## Security
-
-No real secrets are committed to this repository — no passwords, JWT keys, or connection strings. Local configuration uses `.env` (via `.env.example` as a template) or `.NET User Secrets`. Before pushing to a public repository, this was verified with:
-
-```bash
-git grep -n -i -E "password|secret|apikey|api_key|client_secret|connectionstring|bearer"
-```
-
----
-
-Built as part of the Assistant Software Engineer recruitment process at OnnoRokom Projukti Limited — a hands-on exercise in role-based auth, REST API design, backend-enforced business rules, and full-stack integration between React and ASP.NET Core.
+See [docs/SECURITY_AUDIT.md](docs/SECURITY_AUDIT.md) for the security boundary, corrected vulnerabilities, residual risk, and recommended roadmap.
