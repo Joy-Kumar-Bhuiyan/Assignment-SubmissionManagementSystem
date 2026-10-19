@@ -17,23 +17,47 @@ public class UsersController : ControllerBase
 {
     private readonly AppDbContext _db;
     private readonly PasswordService _passwordService;
+    private readonly AuditService _audit;
 
-    public UsersController(AppDbContext db, PasswordService passwordService)
+    public UsersController(AppDbContext db, PasswordService passwordService, AuditService audit)
     {
         _db = db;
         _passwordService = passwordService;
+        _audit = audit;
     }
 
     [HttpGet]
     public async Task<IActionResult> GetAllUsers(
         [FromQuery, Range(1, int.MaxValue)] int page = 1,
         [FromQuery, Range(1, 100)] int pageSize = 50,
+        [FromQuery, StringLength(100)] string? search = null,
+        [FromQuery, RegularExpression("^(Admin|Teacher|Student)$")] string? role = null,
+        [FromQuery, Range(1, int.MaxValue)] int? classId = null,
+        [FromQuery, RegularExpression("^(id|email|role)$")] string sortBy = "id",
+        [FromQuery, RegularExpression("^(asc|desc)$")] string sortDirection = "asc",
         CancellationToken cancellationToken = default)
     {
         var query = _db.Users.AsNoTracking();
+        if (!string.IsNullOrWhiteSpace(search))
+        {
+            var term = search.Trim().ToLower();
+            query = query.Where(user => user.Email.ToLower().Contains(term));
+        }
+        if (!string.IsNullOrWhiteSpace(role)) query = query.Where(user => user.Role == role);
+        if (classId.HasValue) query = query.Where(user => user.ClassId == classId);
+
         var totalItems = await query.CountAsync(cancellationToken);
+        query = (sortBy, sortDirection) switch
+        {
+            ("email", "asc") => query.OrderBy(user => user.Email),
+            ("email", _) => query.OrderByDescending(user => user.Email),
+            ("role", "asc") => query.OrderBy(user => user.Role),
+            ("role", _) => query.OrderByDescending(user => user.Role),
+            ("id", "desc") => query.OrderByDescending(user => user.Id),
+            _ => query.OrderBy(user => user.Id)
+        };
+
         var items = await query
-            .OrderBy(u => u.Id)
             .Skip((page - 1) * pageSize)
             .Take(pageSize)
             .Select(u => new { u.Id, u.Email, u.Role, u.ClassId })
@@ -75,6 +99,8 @@ public class UsersController : ControllerBase
         };
 
         _db.Users.Add(user);
+        await _db.SaveChangesAsync(cancellationToken);
+        _audit.Add(User, "user.created", "User", user.Id, $"User account created with role {user.Role}.");
         await _db.SaveChangesAsync(cancellationToken);
         return Ok(new { user.Id, user.Email, user.Role, user.ClassId });
     }
@@ -125,6 +151,7 @@ public class UsersController : ControllerBase
             user.PasswordHash = _passwordService.Hash(dto.Password);
         }
 
+        _audit.Add(User, "user.updated", "User", user.Id, $"User account updated with role {user.Role}.");
         await _db.SaveChangesAsync(cancellationToken);
         return Ok(new { user.Id, user.Email, user.Role, user.ClassId });
     }
@@ -137,6 +164,7 @@ public class UsersController : ControllerBase
 
         user.PasswordHash = _passwordService.Hash(dto.NewPassword);
         user.TokenVersion++;
+        _audit.Add(User, "user.password_reset", "User", user.Id, "User password reset and existing sessions revoked.");
         await _db.SaveChangesAsync(cancellationToken);
         return Ok(new { message = "Password updated successfully. Existing sessions were revoked." });
     }
@@ -173,6 +201,7 @@ public class UsersController : ControllerBase
             _db.Submissions.RemoveRange(submissions);
         }
 
+        _audit.Add(User, "user.deleted", "User", user.Id, $"User account with role {user.Role} deleted.");
         _db.Users.Remove(user);
         await _db.SaveChangesAsync(cancellationToken);
         return Ok(new { message = "User deleted successfully." });

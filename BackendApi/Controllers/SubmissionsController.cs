@@ -16,11 +16,19 @@ public class SubmissionsController : ControllerBase
 {
     private readonly AppDbContext _db;
     private readonly AccessControlService _access;
+    private readonly AuditService _audit;
+    private readonly NotificationService _notifications;
 
-    public SubmissionsController(AppDbContext db, AccessControlService access)
+    public SubmissionsController(
+        AppDbContext db,
+        AccessControlService access,
+        AuditService audit,
+        NotificationService notifications)
     {
         _db = db;
         _access = access;
+        _audit = audit;
+        _notifications = notifications;
     }
 
     [HttpPost]
@@ -69,6 +77,7 @@ public class SubmissionsController : ControllerBase
             existingSubmission.Marks = null;
             existingSubmission.Feedback = null;
 
+            _audit.Add(User, "submission.resubmitted", "Submission", existingSubmission.Id, "Submission revised and returned to review.");
             await _db.SaveChangesAsync(cancellationToken);
             return Ok(existingSubmission);
         }
@@ -85,6 +94,9 @@ public class SubmissionsController : ControllerBase
 
         _db.Submissions.Add(submission);
         await _db.SaveChangesAsync(cancellationToken);
+        _audit.Add(User, "submission.created", "Submission", submission.Id, "Submission created.");
+        await _db.SaveChangesAsync(cancellationToken);
+        await _notifications.SubmissionCreatedAsync(submission, cancellationToken);
         return Ok(submission);
     }
 
@@ -109,6 +121,12 @@ public class SubmissionsController : ControllerBase
     public async Task<IActionResult> GetAllSubmissions(
         [FromQuery, Range(1, int.MaxValue)] int page = 1,
         [FromQuery, Range(1, 100)] int pageSize = 10,
+        [FromQuery, RegularExpression("^(UnderReview|Returned|Graded|Rejected)$")] string? status = null,
+        [FromQuery, Range(1, int.MaxValue)] int? assignmentId = null,
+        [FromQuery, StringLength(100)] string? studentSearch = null,
+        [FromQuery] bool? isLate = null,
+        [FromQuery, RegularExpression("^(submittedAt|studentEmail|status)$")] string sortBy = "submittedAt",
+        [FromQuery, RegularExpression("^(asc|desc)$")] string sortDirection = "desc",
         CancellationToken cancellationToken = default)
     {
         var email = User.GetEmail();
@@ -124,9 +142,27 @@ public class SubmissionsController : ControllerBase
                     allocation.SubjectId == s.Assignment.SubjectId));
         }
 
+        if (!string.IsNullOrWhiteSpace(status)) query = query.Where(item => item.Status == status);
+        if (assignmentId.HasValue) query = query.Where(item => item.AssignmentId == assignmentId);
+        if (!string.IsNullOrWhiteSpace(studentSearch))
+        {
+            var term = studentSearch.Trim().ToLower();
+            query = query.Where(item => item.StudentEmail.ToLower().Contains(term));
+        }
+        if (isLate.HasValue) query = query.Where(item => item.IsLate == isLate);
+
         var totalItems = await query.CountAsync(cancellationToken);
+        query = (sortBy, sortDirection) switch
+        {
+            ("studentEmail", "asc") => query.OrderBy(item => item.StudentEmail),
+            ("studentEmail", _) => query.OrderByDescending(item => item.StudentEmail),
+            ("status", "asc") => query.OrderBy(item => item.Status),
+            ("status", _) => query.OrderByDescending(item => item.Status),
+            ("submittedAt", "asc") => query.OrderBy(item => item.SubmittedAt),
+            _ => query.OrderByDescending(item => item.SubmittedAt)
+        };
+
         var items = await query
-            .OrderByDescending(s => s.SubmittedAt)
             .Skip((page - 1) * pageSize)
             .Take(pageSize)
             .ToListAsync(cancellationToken);
@@ -161,7 +197,9 @@ public class SubmissionsController : ControllerBase
         submission.Feedback = grade.Feedback.Trim();
         submission.Status = SubmissionStatuses.Graded;
 
+        _audit.Add(User, "submission.graded", "Submission", submission.Id, "Submission graded.");
         await _db.SaveChangesAsync(cancellationToken);
+        await _notifications.SubmissionGradedAsync(submission, cancellationToken);
         return Ok(submission);
     }
 
@@ -183,7 +221,19 @@ public class SubmissionsController : ControllerBase
 
         submission.Status = dto.Status;
         submission.Marks = null;
+        _audit.Add(
+            User,
+            dto.Status == SubmissionStatuses.Returned ? "submission.returned" : "submission.rejected",
+            "Submission",
+            submission.Id,
+            dto.Status == SubmissionStatuses.Returned ? "Submission returned for revision." : "Submission rejected.");
         await _db.SaveChangesAsync(cancellationToken);
+
+        if (dto.Status == SubmissionStatuses.Returned)
+        {
+            await _notifications.SubmissionReturnedAsync(submission, cancellationToken);
+        }
+
         return Ok(submission);
     }
 }

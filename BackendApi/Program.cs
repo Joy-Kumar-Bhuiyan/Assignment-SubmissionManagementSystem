@@ -45,6 +45,41 @@ public class Program
 
         builder.Services.AddScoped<PasswordService>();
         builder.Services.AddScoped<AccessControlService>();
+        builder.Services.AddScoped<AuditService>();
+        builder.Services.AddScoped<NotificationService>();
+
+        builder.Services.AddOptions<EmailOptions>()
+            .Bind(builder.Configuration.GetSection(EmailOptions.SectionName))
+            .Validate(options => !options.Enabled ||
+                (!string.IsNullOrWhiteSpace(options.Host) &&
+                 options.Port is >= 1 and <= 65535 &&
+                 !string.IsNullOrWhiteSpace(options.Username) &&
+                 !string.IsNullOrWhiteSpace(options.Password) &&
+                 !string.IsNullOrWhiteSpace(options.FromAddress)),
+                "Enabled email delivery requires a host, valid port, credentials, and from address.")
+            .ValidateOnStart();
+        builder.Services.AddTransient<LoggingEmailService>();
+        builder.Services.AddTransient<SmtpEmailService>();
+        builder.Services.AddScoped<IEmailService>(services =>
+            services.GetRequiredService<Microsoft.Extensions.Options.IOptions<EmailOptions>>().Value.Enabled
+                ? services.GetRequiredService<SmtpEmailService>()
+                : services.GetRequiredService<LoggingEmailService>());
+
+        var allowInsecureWebhook = builder.Environment.IsDevelopment() || builder.Environment.IsEnvironment("Testing");
+        builder.Services.AddOptions<WebhookOptions>()
+            .Bind(builder.Configuration.GetSection(WebhookOptions.SectionName))
+            .Validate(options => !options.Enabled ||
+                (Uri.TryCreate(options.Url, UriKind.Absolute, out var uri) &&
+                 (uri.Scheme == Uri.UriSchemeHttps || (allowInsecureWebhook && uri.Scheme == Uri.UriSchemeHttp)) &&
+                 options.TimeoutSeconds is >= 1 and <= 30),
+                "Enabled webhooks require a valid HTTPS URL and a timeout from 1 to 30 seconds.")
+            .ValidateOnStart();
+        builder.Services.AddHttpClient<IOutgoingWebhookService, ConfiguredWebhookService>((services, client) =>
+        {
+            var options = services.GetRequiredService<Microsoft.Extensions.Options.IOptions<WebhookOptions>>().Value;
+            client.Timeout = TimeSpan.FromSeconds(Math.Clamp(options.TimeoutSeconds, 1, 30));
+        });
+
         builder.Services.AddControllers();
         builder.Services.AddEndpointsApiExplorer();
         builder.Services.AddHealthChecks();

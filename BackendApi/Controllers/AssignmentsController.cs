@@ -16,19 +16,40 @@ public class AssignmentsController : ControllerBase
 {
     private readonly AppDbContext _db;
     private readonly AccessControlService _access;
+    private readonly AuditService _audit;
+    private readonly NotificationService _notifications;
 
-    public AssignmentsController(AppDbContext db, AccessControlService access)
+    public AssignmentsController(
+        AppDbContext db,
+        AccessControlService access,
+        AuditService audit,
+        NotificationService notifications)
     {
         _db = db;
         _access = access;
+        _audit = audit;
+        _notifications = notifications;
     }
 
     [HttpGet]
     public async Task<IActionResult> GetAllAssignments(
         [FromQuery, Range(1, int.MaxValue)] int page = 1,
         [FromQuery, Range(1, 100)] int pageSize = 10,
+        [FromQuery, StringLength(100)] string? search = null,
+        [FromQuery, RegularExpression("^(draft|published)$", ErrorMessage = "status must be draft or published.")] string? status = null,
+        [FromQuery, Range(1, int.MaxValue)] int? classId = null,
+        [FromQuery, Range(1, int.MaxValue)] int? subjectId = null,
+        [FromQuery] DateTime? fromDate = null,
+        [FromQuery] DateTime? toDate = null,
+        [FromQuery, RegularExpression("^(createdDate|dueDate|title)$", ErrorMessage = "sortBy must be createdDate, dueDate, or title.")] string sortBy = "createdDate",
+        [FromQuery, RegularExpression("^(asc|desc)$", ErrorMessage = "sortDirection must be asc or desc.")] string sortDirection = "desc",
         CancellationToken cancellationToken = default)
     {
+        if (fromDate.HasValue && toDate.HasValue && fromDate > toDate)
+        {
+            return BadRequest(new { message = "fromDate must be earlier than or equal to toDate." });
+        }
+
         var email = User.GetEmail();
         var query = _db.Assignments
             .AsNoTracking()
@@ -58,9 +79,31 @@ public class AssignmentsController : ControllerBase
             return Forbid();
         }
 
+        if (!string.IsNullOrWhiteSpace(search))
+        {
+            var term = search.Trim().ToLower();
+            query = query.Where(item => item.Title.ToLower().Contains(term) || item.Description.ToLower().Contains(term));
+        }
+
+        if (status == "draft") query = query.Where(item => item.IsDraft);
+        if (status == "published") query = query.Where(item => !item.IsDraft);
+        if (classId.HasValue) query = query.Where(item => item.ClassId == classId);
+        if (subjectId.HasValue) query = query.Where(item => item.SubjectId == subjectId);
+        if (fromDate.HasValue) query = query.Where(item => item.CreatedDate >= fromDate.Value.ToUniversalTime());
+        if (toDate.HasValue) query = query.Where(item => item.CreatedDate <= toDate.Value.ToUniversalTime());
+
         var totalItems = await query.CountAsync(cancellationToken);
+        query = (sortBy, sortDirection) switch
+        {
+            ("title", "asc") => query.OrderBy(item => item.Title),
+            ("title", _) => query.OrderByDescending(item => item.Title),
+            ("dueDate", "asc") => query.OrderBy(item => item.DueDate),
+            ("dueDate", _) => query.OrderByDescending(item => item.DueDate),
+            ("createdDate", "asc") => query.OrderBy(item => item.CreatedDate),
+            _ => query.OrderByDescending(item => item.CreatedDate)
+        };
+
         var items = await query
-            .OrderByDescending(a => a.CreatedDate)
             .Skip((page - 1) * pageSize)
             .Take(pageSize)
             .Select(a => new
@@ -153,6 +196,18 @@ public class AssignmentsController : ControllerBase
 
         _db.Assignments.Add(assignment);
         await _db.SaveChangesAsync(cancellationToken);
+        _audit.Add(User, "assignment.created", "Assignment", assignment.Id, "Assignment created.");
+        if (!assignment.IsDraft)
+        {
+            _audit.Add(User, "assignment.published", "Assignment", assignment.Id, "Assignment published.");
+        }
+        await _db.SaveChangesAsync(cancellationToken);
+
+        if (!assignment.IsDraft)
+        {
+            await _notifications.AssignmentPublishedAsync(assignment, cancellationToken);
+        }
+
         return Ok(assignment);
     }
 
@@ -170,6 +225,7 @@ public class AssignmentsController : ControllerBase
         var proposedTarget = new Assignment { ClassId = dto.ClassId, SubjectId = dto.SubjectId };
         if (!await _access.CanManageAssignmentAsync(User, proposedTarget, cancellationToken)) return Forbid();
 
+        var wasDraft = assignment.IsDraft;
         assignment.Title = dto.Title.Trim();
         assignment.Description = dto.Description.Trim();
         assignment.MaxMarks = dto.MaxMarks;
@@ -178,7 +234,18 @@ public class AssignmentsController : ControllerBase
         assignment.ClassId = dto.ClassId;
         assignment.SubjectId = dto.SubjectId;
 
+        _audit.Add(User, "assignment.updated", "Assignment", assignment.Id, "Assignment details updated.");
+        if (wasDraft && !assignment.IsDraft)
+        {
+            _audit.Add(User, "assignment.published", "Assignment", assignment.Id, "Assignment published.");
+        }
         await _db.SaveChangesAsync(cancellationToken);
+
+        if (wasDraft && !assignment.IsDraft)
+        {
+            await _notifications.AssignmentPublishedAsync(assignment, cancellationToken);
+        }
+
         return Ok(assignment);
     }
 
@@ -190,6 +257,7 @@ public class AssignmentsController : ControllerBase
         if (assignment is null) return NotFound();
         if (!await _access.CanManageAssignmentAsync(User, assignment, cancellationToken)) return Forbid();
 
+        _audit.Add(User, "assignment.deleted", "Assignment", assignment.Id, "Assignment deleted.");
         _db.Assignments.Remove(assignment);
         await _db.SaveChangesAsync(cancellationToken);
         return Ok(new { message = "Assignment deleted" });

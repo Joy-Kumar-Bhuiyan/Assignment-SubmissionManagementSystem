@@ -14,6 +14,7 @@ public class AppDbContext : DbContext
     public DbSet<ClassEntity> Classes => Set<ClassEntity>();
     public DbSet<Subject> Subjects => Set<Subject>();
     public DbSet<TeacherAllocation> TeacherAllocations => Set<TeacherAllocation>();
+    public DbSet<AuditEvent> AuditEvents => Set<AuditEvent>();
 
     protected override void OnModelCreating(ModelBuilder modelBuilder)
     {
@@ -70,6 +71,19 @@ public class AppDbContext : DbContext
             entity.Property(s => s.Key).HasMaxLength(100);
             entity.Property(s => s.Value).HasMaxLength(2_000);
             entity.HasIndex(s => s.Key).IsUnique();
+        });
+
+        modelBuilder.Entity<AuditEvent>(entity =>
+        {
+            entity.Property(a => a.Action).HasMaxLength(80);
+            entity.Property(a => a.EntityType).HasMaxLength(80);
+            entity.Property(a => a.EntityId).HasMaxLength(100);
+            entity.Property(a => a.PerformedByRole).HasMaxLength(16);
+            entity.Property(a => a.Description).HasMaxLength(500);
+            entity.HasIndex(a => a.CreatedAtUtc);
+            entity.HasIndex(a => a.Action);
+            entity.HasIndex(a => new { a.EntityType, a.EntityId });
+            entity.HasIndex(a => a.PerformedByUserId);
         });
     }
 }

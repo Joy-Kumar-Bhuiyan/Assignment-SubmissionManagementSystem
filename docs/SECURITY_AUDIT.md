@@ -1,6 +1,6 @@
 # Security audit and hardening report
 
-**Audit date:** 2026-10-18  
+**Audit dates:** 2026-10-18 and 2026-10-19
 **Scope:** ASP.NET Core API, React/Vite client, data model, dependency manifests, tests, and repository hygiene
 
 ## Executive result
@@ -64,6 +64,40 @@ git push origin --force --tags
 - API responses include clickjacking, MIME-sniffing, referrer, and browser-permission hardening headers.
 
 ## Remaining risk and roadmap
+
+## 2026-10-19 feature security review
+
+### Fixed
+
+- Audit access is Admin-only, paginated, and uses bounded filters. Controlled descriptions exclude passwords, hashes, tokens, answers, feedback, request bodies, connection strings, and provider credentials.
+- Dashboard and XML export queries apply Student class/identity or Teacher allocation scope before aggregation/projection.
+- Assignment, submission, and user sort fields use fixed allowlists; filters remain parameterized EF Core expressions and run before pagination.
+- Webhook URLs come only from trusted deployment configuration. Production requires an absolute HTTPS URL and a 1–30 second timeout; there is no runtime arbitrary-URL endpoint.
+- XML is output-only DTO serialization. The application does not accept or manually parse XML, so DTD/external-entity resolution is not enabled.
+- SMTP and webhook failures are caught after the business database save, logged without credentials/payloads, and tested not to roll back a grade.
+
+### Checked
+
+- Existing JWT, role, teacher-allocation, student-class/ownership, deadline, state-transition, marks, pagination, DTO, CORS, rate-limit, exception, header, and uniqueness controls remain in place.
+- New endpoints require authentication; audit events additionally require Admin. Student and Teacher reporting/export scope comes from validated identity rather than client-supplied email.
+- Invalid export format, filter values, date ranges, page sizes, IDs, statuses, and oversized strings receive validation errors.
+- No raw SQL or user-composed SQL was added. MSSQL examples are documentation only and use parameters in the stored-procedure example.
+
+### Remaining risks
+
+- `AuditEvents` is an ordinary mutable application table, not an append-only/tamper-evident compliance store.
+- Creating an integer-key entity and its audit row requires two `SaveChangesAsync` calls so the generated entity ID is known. A rare audit-write failure after the core insert could leave that change without its audit row. A transactional interceptor/outbox is a future option if compliance requirements justify it.
+- Email/webhook delivery is best effort. There is no retry queue, idempotency key, signature, or durable outbox.
+- SMTP recipient addresses appear in operational logs when delivery is disabled/fails; production log access and retention must be restricted.
+- EF InMemory tests do not prove PostgreSQL translation/constraint behavior for every new query.
+
+### Deployment requirements for new features
+
+- Apply the `AddPortfolioFeatures` migration in staging before production.
+- Keep `Email:Enabled` and `Webhook:Enabled` false until secrets/endpoints are configured through a secret manager and tested.
+- Restrict who can change deployment environment variables. A trusted operator could still configure a webhook to an internal destination.
+- Use an approved SMTP account/from address, HTTPS webhook receiver, centralized logs with access controls, and monitoring for repeated provider failures.
+- Retain only the audit events and operational logs needed by the application's real policy.
 
 ### Highest priority
 

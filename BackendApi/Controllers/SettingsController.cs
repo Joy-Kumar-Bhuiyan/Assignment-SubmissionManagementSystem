@@ -2,6 +2,7 @@ using System.ComponentModel.DataAnnotations;
 using BackendApi.Data;
 using BackendApi.Models;
 using BackendApi.Security;
+using BackendApi.Services;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.EntityFrameworkCore;
@@ -22,10 +23,12 @@ public class SettingsController : ControllerBase
     };
 
     private readonly AppDbContext _db;
+    private readonly AuditService _audit;
 
-    public SettingsController(AppDbContext db)
+    public SettingsController(AppDbContext db, AuditService audit)
     {
         _db = db;
+        _audit = audit;
     }
 
     [HttpGet]
@@ -67,13 +70,16 @@ public class SettingsController : ControllerBase
         var existing = await _db.SystemSettings.SingleOrDefaultAsync(s => s.Key == dto.Key, cancellationToken);
         if (existing is null)
         {
-            _db.SystemSettings.Add(new SystemSetting { Key = dto.Key, Value = dto.Value.Trim() });
+            existing = new SystemSetting { Key = dto.Key, Value = dto.Value.Trim() };
+            _db.SystemSettings.Add(existing);
         }
         else
         {
             existing.Value = dto.Value.Trim();
         }
 
+        await _db.SaveChangesAsync(cancellationToken);
+        _audit.Add(User, "setting.updated", "SystemSetting", existing.Id, $"Setting {existing.Key} updated.");
         await _db.SaveChangesAsync(cancellationToken);
         return Ok(new { message = "Setting updated successfully" });
     }

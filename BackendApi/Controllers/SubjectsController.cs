@@ -2,6 +2,7 @@ using System.ComponentModel.DataAnnotations;
 using BackendApi.Data;
 using BackendApi.Models;
 using BackendApi.Security;
+using BackendApi.Services;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.EntityFrameworkCore;
@@ -14,10 +15,12 @@ namespace BackendApi.Controllers;
 public class SubjectsController : ControllerBase
 {
     private readonly AppDbContext _db;
+    private readonly AuditService _audit;
 
-    public SubjectsController(AppDbContext db)
+    public SubjectsController(AppDbContext db, AuditService audit)
     {
         _db = db;
+        _audit = audit;
     }
 
     [HttpGet]
@@ -40,6 +43,8 @@ public class SubjectsController : ControllerBase
         var entity = new Subject { Name = name, Code = code };
         _db.Subjects.Add(entity);
         await _db.SaveChangesAsync(cancellationToken);
+        _audit.Add(User, "subject.created", "Subject", entity.Id, "Subject created.");
+        await _db.SaveChangesAsync(cancellationToken);
         return Ok(entity);
     }
 
@@ -58,6 +63,7 @@ public class SubjectsController : ControllerBase
 
         entity.Name = dto.Name.Trim();
         entity.Code = code;
+        _audit.Add(User, "subject.updated", "Subject", entity.Id, "Subject updated.");
         await _db.SaveChangesAsync(cancellationToken);
         return Ok(entity);
     }
@@ -73,6 +79,7 @@ public class SubjectsController : ControllerBase
                     await _db.TeacherAllocations.AnyAsync(a => a.SubjectId == id, cancellationToken);
         if (inUse) return Conflict(new { message = "This subject is in use and cannot be deleted." });
 
+        _audit.Add(User, "subject.deleted", "Subject", entity.Id, "Subject deleted.");
         _db.Subjects.Remove(entity);
         await _db.SaveChangesAsync(cancellationToken);
         return Ok(new { message = "Subject deleted" });

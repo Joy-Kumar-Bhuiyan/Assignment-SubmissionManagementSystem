@@ -11,6 +11,7 @@ using Microsoft.AspNetCore.Authentication;
 using Microsoft.AspNetCore.Hosting;
 using Microsoft.AspNetCore.Mvc.Testing;
 using Microsoft.Extensions.DependencyInjection;
+using Microsoft.Extensions.DependencyInjection.Extensions;
 using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Options;
 using Xunit;
@@ -26,6 +27,13 @@ public class CustomWebApplicationFactory<TStartup> : WebApplicationFactory<TStar
         {
             services.AddAuthentication("Test")
                 .AddScheme<AuthenticationSchemeOptions, TestAuthHandler>("Test", _ => { });
+
+            services.RemoveAll<IEmailService>();
+            services.RemoveAll<IOutgoingWebhookService>();
+            services.AddSingleton<RecordingEmailService>();
+            services.AddSingleton<RecordingWebhookService>();
+            services.AddSingleton<IEmailService>(services => services.GetRequiredService<RecordingEmailService>());
+            services.AddSingleton<IOutgoingWebhookService>(services => services.GetRequiredService<RecordingWebhookService>());
         });
     }
 }

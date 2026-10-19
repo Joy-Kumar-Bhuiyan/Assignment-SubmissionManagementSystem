@@ -2,6 +2,7 @@ using System.ComponentModel.DataAnnotations;
 using BackendApi.Data;
 using BackendApi.Models;
 using BackendApi.Security;
+using BackendApi.Services;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.EntityFrameworkCore;
@@ -14,10 +15,12 @@ namespace BackendApi.Controllers;
 public class ClassesController : ControllerBase
 {
     private readonly AppDbContext _db;
+    private readonly AuditService _audit;
 
-    public ClassesController(AppDbContext db)
+    public ClassesController(AppDbContext db, AuditService audit)
     {
         _db = db;
+        _audit = audit;
     }
 
     [HttpGet]
@@ -41,6 +44,8 @@ public class ClassesController : ControllerBase
         var entity = new ClassEntity { Name = name, Section = section };
         _db.Classes.Add(entity);
         await _db.SaveChangesAsync(cancellationToken);
+        _audit.Add(User, "class.created", "Class", entity.Id, "Class created.");
+        await _db.SaveChangesAsync(cancellationToken);
         return Ok(entity);
     }
 
@@ -60,6 +65,7 @@ public class ClassesController : ControllerBase
 
         entity.Name = name;
         entity.Section = section;
+        _audit.Add(User, "class.updated", "Class", entity.Id, "Class updated.");
         await _db.SaveChangesAsync(cancellationToken);
         return Ok(entity);
     }
@@ -76,6 +82,7 @@ public class ClassesController : ControllerBase
                     await _db.TeacherAllocations.AnyAsync(a => a.ClassId == id, cancellationToken);
         if (inUse) return Conflict(new { message = "This class is in use and cannot be deleted." });
 
+        _audit.Add(User, "class.deleted", "Class", entity.Id, "Class deleted.");
         _db.Classes.Remove(entity);
         await _db.SaveChangesAsync(cancellationToken);
         return Ok(new { message = "Class deleted" });

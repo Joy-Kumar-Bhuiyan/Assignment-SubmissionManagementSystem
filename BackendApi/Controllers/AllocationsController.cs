@@ -2,6 +2,7 @@ using System.ComponentModel.DataAnnotations;
 using BackendApi.Data;
 using BackendApi.Models;
 using BackendApi.Security;
+using BackendApi.Services;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.EntityFrameworkCore;
@@ -14,10 +15,12 @@ namespace BackendApi.Controllers;
 public class AllocationsController : ControllerBase
 {
     private readonly AppDbContext _db;
+    private readonly AuditService _audit;
 
-    public AllocationsController(AppDbContext db)
+    public AllocationsController(AppDbContext db, AuditService audit)
     {
         _db = db;
+        _audit = audit;
     }
 
     [HttpGet]
@@ -73,6 +76,8 @@ public class AllocationsController : ControllerBase
 
         _db.TeacherAllocations.Add(allocation);
         await _db.SaveChangesAsync(cancellationToken);
+        _audit.Add(User, "allocation.created", "TeacherAllocation", allocation.Id, "Teacher allocation created.");
+        await _db.SaveChangesAsync(cancellationToken);
         return Ok(allocation);
     }
 
@@ -82,6 +87,7 @@ public class AllocationsController : ControllerBase
         var allocation = await _db.TeacherAllocations.FindAsync([id], cancellationToken);
         if (allocation is null) return NotFound();
 
+        _audit.Add(User, "allocation.deleted", "TeacherAllocation", allocation.Id, "Teacher allocation deleted.");
         _db.TeacherAllocations.Remove(allocation);
         await _db.SaveChangesAsync(cancellationToken);
         return Ok(new { message = "Allocation deleted" });
