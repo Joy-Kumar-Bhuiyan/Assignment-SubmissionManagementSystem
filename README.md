@@ -1,28 +1,25 @@
 # Assignment & Submission Management System
 
-A role-based school assignment workflow built as a junior-friendly full-stack portfolio project. Admins manage the academic structure, allocated teachers publish and review work, and students see and submit only assignments available to their class. The API adds practical reporting, traceability, and small external integrations without unnecessary architecture.
+[![CI](https://github.com/Joy-Kumar-Bhuiyan/Assignment-SubmissionManagementSystem/actions/workflows/ci.yml/badge.svg)](https://github.com/Joy-Kumar-Bhuiyan/Assignment-SubmissionManagementSystem/actions/workflows/ci.yml)
 
-## Tech stack
+A role-based assignment platform built to practise maintainable backend design with ASP.NET Core. Administrators manage academic data, allocated teachers publish and grade work, and students can access and submit only work belonging to their class. The React interface consumes the same authenticated REST API documented in Swagger.
 
-- ASP.NET Core 10 Web API, C#, Entity Framework Core, Npgsql, PostgreSQL
-- React 19 and Vite
-- JWT bearer authentication, BCrypt, Swagger/OpenAPI
-- xUnit, FluentAssertions, EF Core InMemory test host
-- GitHub Actions, CodeQL, Dependabot, NuGet audit, npm audit
+## Screenshots to add
 
-## Problem it solves
+Add these four real screenshots here after running the application:
 
-The system keeps users, classes, subjects, teacher allocations, assignments, and submissions in one workflow. Server-side authorization prevents a teacher from managing an unallocated class-subject pair and prevents a student from reading or changing another student's work.
+1. `docs/images/login.png` — login screen.
+2. `docs/images/student-assignments.png` — student assignment list.
+3. `docs/images/teacher-grading.png` — teacher grading a submission.
+4. `docs/images/swagger-authorize.png` — Swagger with the JWT Authorize dialog.
 
-## Roles
+## Features by role
 
-| Role | What the API allows |
+| Role | Capabilities |
 |---|---|
-| Admin | Manage users and academic structure, view all reporting, and read audit events |
-| Teacher | Manage assignments and submissions only for allocated class-subject pairs |
-| Student | View published assignments for their class, submit their own work, and view their own results |
-
-Submission states follow:
+| Admin | Manage users, classes, subjects, allocations and settings; view dashboards and audit events; access all assignment and submission records |
+| Teacher | Manage assignments and submissions only for allocated class-subject pairs; grade, return or reject work; read status history |
+| Student | View published assignments for their class; create or revise their own submissions; view only their own results |
 
 ```text
 UnderReview -> Graded
@@ -30,67 +27,150 @@ UnderReview -> Returned -> UnderReview
 UnderReview -> Rejected
 ```
 
-## Key backend features
+Every status transition is stored in `SubmissionStatusHistories` with the previous status, new status, actor, role and UTC timestamp. Broader application actions are stored separately as `AuditEvents`.
 
-- REST/JSON API with DTO validation and bounded pagination
-- JWT signature, issuer, audience, lifetime, current role/email, and per-user token-version validation
-- Object-level authorization for assignment allocation, student class membership, and submission ownership
-- Database-side search, filters, validated sorting, counts, grouping, and marks-percentage averages
-- Persistent, Admin-only audit events with action/entity/actor/date filters
-- Role-aware dashboard summaries for Admin, Teacher, and Student
-- Optional SMTP email for publication, grading, and return-for-revision notifications
-- Configuration-only outgoing JSON webhooks for publication, submission, and grading events
-- Explicit role-scoped assignment export as JSON or XML
-- PostgreSQL migrations, uniqueness/check constraints, and query-focused indexes
-- Centralized Problem Details, login throttling, allowlisted CORS, HTTPS/HSTS, and response security headers
+## Tech stack
+
+- ASP.NET Core 10 Web API, C#, Entity Framework Core 10, Npgsql and PostgreSQL
+- JWT bearer authentication and BCrypt password hashing
+- React 19 and Vite
+- xUnit, FluentAssertions and EF Core InMemory
+- Swagger/OpenAPI, Serilog and ASP.NET Core health checks
+- GitHub Actions, Dependabot and CodeQL
 
 ## Architecture
 
 ```text
-React/Vite
-    |
-REST + JSON
-    v
-ASP.NET Core Controllers
-    |
-Small services (access, audit, notifications, email, webhook)
-    |
-Entity Framework Core + LINQ
-    |
-PostgreSQL
-
-Optional outputs: SMTP provider, configured webhook receiver, XML export
+React/Vite UI
+     |
+     | HTTPS + JSON + JWT
+     v
+ASP.NET Core controllers (validation and HTTP mapping)
+     |
+     +--> access, audit and notification services
+     |
+     v
+EF Core DbContext --> PostgreSQL
+     |
+     +--> optional SMTP provider
+     +--> optional HMAC-signed webhook receiver
 ```
 
-This remains one understandable application. It does not use CQRS, MediatR, repositories over EF Core, message brokers, microservices, or event sourcing.
+The project deliberately stays a single application. It does not add CQRS, MediatR, generic repositories, queues or microservices without a demonstrated need.
 
-## Security decisions
+## Fresh-clone setup
 
-- Authorization is enforced in controllers/services; hiding frontend buttons is never treated as security.
-- Passwords are BCrypt hashes with work factor 12. Unknown-user login attempts still perform dummy BCrypt work.
-- Password or role changes increment `TokenVersion`, invalidating existing JWTs.
-- Email/webhook credentials come from configuration. They are not logged or stored in audit events.
-- The webhook URL is trusted deployment configuration, not user input; production validation requires HTTPS and a 1–30 second timeout.
-- XML is generated from DTOs with `XmlSerializer`; this endpoint does not parse incoming XML and therefore does not enable DTD/external-entity processing.
-- Email and webhook calls happen after the database write; provider failure is logged and does not undo a successful grade, submission, or publication.
+### Prerequisites
 
-Read [the security audit](docs/SECURITY_AUDIT.md) before deploying. It includes mandatory rotation/history-cleanup work for secrets exposed in an older commit.
+- Git
+- .NET SDK 10
+- Node.js 24 or a compatible active LTS release
+- PostgreSQL with an empty database named `SchoolDb`
 
-## API examples
+```bash
+git clone https://github.com/Joy-Kumar-Bhuiyan/Assignment-SubmissionManagementSystem.git
+cd Assignment-SubmissionManagementSystem
+dotnet tool restore
+```
+
+ASP.NET Core does **not** load `.env` automatically. `.env.example` is a deployment-variable reference only. For local development, use .NET User Secrets.
+
+Windows PowerShell:
+
+```powershell
+cd BackendApi
+dotnet user-secrets set "ConnectionStrings:DefaultConnection" "Host=localhost;Port=5432;Database=SchoolDb;Username=postgres;Password=YOUR_POSTGRES_PASSWORD"
+dotnet user-secrets set "Jwt:Key" "replace-with-at-least-32-random-bytes"
+dotnet user-secrets set "SeedData:Enabled" "true"
+dotnet user-secrets set "SeedData:AdminPassword" "AdminDemo!2026"
+dotnet user-secrets set "SeedData:TeacherPassword" "TeacherDemo!2026"
+dotnet user-secrets set "SeedData:StudentPassword" "StudentDemo!2026"
+dotnet ef database update
+dotnet run --launch-profile https
+```
+
+macOS/Linux:
+
+```bash
+cd BackendApi
+dotnet user-secrets set 'ConnectionStrings:DefaultConnection' 'Host=localhost;Port=5432;Database=SchoolDb;Username=postgres;Password=YOUR_POSTGRES_PASSWORD'
+dotnet user-secrets set 'Jwt:Key' 'replace-with-at-least-32-random-bytes'
+dotnet user-secrets set 'SeedData:Enabled' 'true'
+dotnet user-secrets set 'SeedData:AdminPassword' 'AdminDemo!2026'
+dotnet user-secrets set 'SeedData:TeacherPassword' 'TeacherDemo!2026'
+dotnet user-secrets set 'SeedData:StudentPassword' 'StudentDemo!2026'
+dotnet ef database update
+dotnet run --launch-profile https
+```
+
+Swagger: `https://localhost:5001/swagger`
+
+Health: `https://localhost:5001/health`
+
+In a second terminal, from the repository root:
+
+```bash
+cd FrontendWeb
+npm ci
+npm run dev
+```
+
+Open `http://localhost:5173`. Vite proxies `/api` to the local HTTPS API.
+
+## Configuration
+
+Use .NET User Secrets locally or environment variables in deployment. Nested keys use double underscores in environment variables, for example `Jwt__Key`.
+
+| Setting | Required | Default | Purpose |
+|---|---:|---|---|
+| `ConnectionStrings:DefaultConnection` | Yes outside tests | none | PostgreSQL connection string |
+| `Jwt:Key` | Yes | none | Signing key; startup fails below 32 UTF-8 bytes |
+| `Jwt:Issuer` | Yes | `AssignmentManagementSystem` | Expected token issuer |
+| `Jwt:Audience` | Yes | `AssignmentManagementSystemUsers` | Expected token audience |
+| `Jwt:ExpiryMinutes` | No | `60` | Token lifetime, clamped to 5–120 minutes |
+| `Cors:AllowedOrigins:0` | Yes | `http://localhost:5173` | Trusted frontend origin; add `:1`, `:2`, etc. for more |
+| `Database:MigrateOnStartup` | No | `false` | Applies EF migrations at startup |
+| `SeedData:Enabled` | No | `false` | Creates demo users when the Users table is empty |
+| `SeedData:AdminPassword` | When seeding | none | Local admin demo password, minimum 12 characters |
+| `SeedData:TeacherPassword` | When seeding | none | Local teacher demo password, minimum 12 characters |
+| `SeedData:StudentPassword` | When seeding | none | Local student demo password, minimum 12 characters |
+| `Email:Enabled` | No | `false` | Enables SMTP; otherwise a log-only provider is used |
+| `Email:Host`, `Port`, `UseSsl`, `Username`, `Password`, `FromAddress`, `FromName` | When email enabled | see `appsettings.json` | SMTP details |
+| `Webhook:Enabled` | No | `false` | Enables outgoing events |
+| `Webhook:Url` | When enabled | none | Trusted HTTPS receiver URL |
+| `Webhook:Secret` | When enabled | none | Minimum 32-byte HMAC-SHA256 secret |
+| `Webhook:TimeoutSeconds` | No | `5` | Timeout from 1 to 30 seconds |
+| `VITE_API_BASE_URL` | No | `/api` | Frontend API base for separate hosting |
+
+Webhooks include `X-Webhook-Signature: sha256=<hex digest>`, retry once for HTTP 408, 429 or 5xx, and never roll back a successful business operation when delivery fails.
+
+## Demo accounts (local development only)
+
+| Role | Email | Local demo password |
+|---|---|---|
+| Admin | `admin@school.com` | `AdminDemo!2026` |
+| Teacher | `teacher@school.com` | `TeacherDemo!2026` |
+| Student | `student@school.com` | `StudentDemo!2026` |
+
+These examples are for a disposable local database only. Never reuse them elsewhere. `DemoSeedTests` verifies that the seeder creates BCrypt hashes matching these configured values.
+
+## API summary
 
 ```text
 POST   /api/auth/login
+GET    /health
 
-GET    /api/assignments?search=sql&status=published&sortBy=dueDate&sortDirection=asc
+GET    /api/assignments?page=1&pageSize=20&classId=1&subjectId=2&status=published
 POST   /api/assignments
 PUT    /api/assignments/{id}
 DELETE /api/assignments/{id}
 
-GET    /api/submissions?status=UnderReview&assignmentId=10
+GET    /api/submissions?page=1&pageSize=20&assignmentId=10&status=UnderReview
 GET    /api/submissions/my
 POST   /api/submissions
 PUT    /api/submissions/{id}/grade
-PUT    /api/submissions/{id}/status
+PATCH  /api/submissions/{id}/status
+GET    /api/submissions/{id}/history
 
 GET    /api/dashboard/summary
 GET    /api/audit-events?action=submission.graded&fromDate=2026-10-01
@@ -104,60 +184,14 @@ GET/POST/DELETE     /api/allocations
 GET/POST            /api/settings
 ```
 
-Swagger documents request/response schemas and accepts `Authorization: Bearer <token>`.
+List endpoints return `totalItems`, `page`, `pageSize`, `totalPages` and `data`. `pageSize` is capped at 100. Swagger exposes schemas and a JWT **Authorize** button.
 
-## Database
+## Tests
 
-PostgreSQL is the application database. EF Core migrations create Users, Classes, Subjects, TeacherAllocations, Assignments, Submissions, SystemSettings, and AuditEvents. Unique indexes prevent duplicate users, classes, subjects, allocations, settings, and per-student assignment submissions. Check constraints protect assignment and mark ranges.
-
-For SQL Server interview practice based on this real schema, see [MSSQL_PRACTICE.sql](docs/MSSQL_PRACTICE.sql) and [SQL_INTERVIEW_GUIDE.md](docs/SQL_INTERVIEW_GUIDE.md). They do not claim that SQL Server is a second runtime database.
-
-## Run locally
-
-### Prerequisites
-
-- .NET SDK 10
-- Node.js 24+
-- PostgreSQL
-
-### Backend configuration
-
-ASP.NET Core does not automatically import `.env`. Use .NET User Secrets locally:
-
-```powershell
-cd BackendApi
-dotnet user-secrets set "ConnectionStrings:DefaultConnection" "Host=localhost;Database=SchoolDb;Username=postgres;Password=YOUR_DATABASE_PASSWORD"
-dotnet user-secrets set "Jwt:Key" "YOUR_RANDOM_SIGNING_KEY_WITH_AT_LEAST_32_BYTES"
-dotnet ef database update
-dotnet run --launch-profile https
-```
-
-Swagger: `https://localhost:5001/swagger`
-
-Health: `https://localhost:5001/health`
-
-Demo seeding is off by default. To use it, set `SeedData:Enabled=true` and provide unique 12+ character Admin, Teacher, and Student passwords. The sample emails are `admin@school.com`, `teacher@school.com`, and `student@school.com`.
-
-### Frontend
-
-```powershell
-cd FrontendWeb
-npm ci
-npm run dev
-```
-
-Open `http://localhost:5173`. Vite proxies `/api` to the HTTPS backend.
-
-### Optional email and webhook
-
-The application runs with both disabled. Configuration names and placeholders are in `.env.example`. Enable SMTP only with provider credentials stored in user secrets/a deployment secret manager. Enable the webhook only with a trusted HTTPS receiver URL. Delivery is best effort; there is no queue or retry scheduler.
-
-## Tests and quality checks
-
-```powershell
-dotnet restore
-dotnet build BackendApi.Tests/BackendApi.Tests.csproj -c Release --no-restore
-dotnet test BackendApi.Tests/BackendApi.Tests.csproj -c Release --no-build --no-restore
+```bash
+dotnet restore AssignmentSubmissionManagementSystem.sln
+dotnet build AssignmentSubmissionManagementSystem.sln --no-restore --configuration Release
+dotnet test AssignmentSubmissionManagementSystem.sln --no-build --no-restore --configuration Release
 
 cd FrontendWeb
 npm ci
@@ -166,28 +200,49 @@ npm run build
 npm audit --audit-level=high
 ```
 
-The suite covers role and allocation boundaries, cross-class submission blocking, deadlines, state transitions, marks validation, pagination, audit authorization/content, dashboard scoping, filters, XML serialization, webhook JSON, notification triggers, integration-failure isolation, and the complete submission workflow.
+Tests cover authentication throttling, role access, ownership and allocations, UTC deadline blocking, excessive marks, hidden drafts, validation and pagination, health, status history, audit events, dashboards, exports, HMAC webhooks, retry/disabled behavior and integration-failure isolation.
 
-## Documentation
+Tests use EF Core InMemory. They are useful for business rules but cannot prove PostgreSQL migrations, constraints, SQL translation, transactions or query performance. Add PostgreSQL container integration tests before production.
 
-- [Changes explained](docs/CHANGES_EXPLAINED.md)
-- [Interview guide](docs/INTERVIEW_GUIDE.md)
-- [Three-minute demo script](docs/DEMO_SCRIPT.md)
-- [Resume notes](docs/RESUME_NOTES.md)
-- [Conservative portfolio review](docs/PORTFOLIO_REVIEW.md)
-- [SOAP integration notes](docs/SOAP_INTEGRATION_NOTES.md)
-- [Security audit](docs/SECURITY_AUDIT.md)
+## Design decisions
+
+- **State workflow:** allowed transitions prevent arbitrary statuses from bypassing rules.
+- **Server-side authorization:** roles are backed by allocation, class and ownership checks.
+- **UTC deadlines:** deadlines and history timestamps are stored and compared in UTC.
+- **DTO boundaries:** controllers validate request DTOs and project responses instead of returning tracked EF entities.
+- **Options pattern:** SMTP and webhook settings are validated at startup and disabled by default.
+- **Best-effort notifications:** provider failures are logged after the database write and do not fail grading.
+- **In-memory tests:** fast rule coverage with the PostgreSQL limitations stated above.
+
+## How this relates to CRM systems
+
+The same patterns appear in CRM work: users have roles and record ownership, teachers have scoped allocations, submissions move through controlled statuses, status history acts like an activity timeline, dashboards summarize pipeline state, and signed webhooks/email notify external systems without coupling them to the core transaction.
+
+## Security notes
+
+- Passwords are BCrypt hashes with work factor 12 and are never returned.
+- JWT validation checks signature, issuer, audience, expiry and per-user token version.
+- Login gives the same response for an unknown email and a wrong password and is rate limited.
+- CORS uses configured origins rather than `AllowAnyOrigin`.
+- Current files contain no real database password or JWT signing key.
+- Older commits contain reusable development credentials. Read [`docs/SECURITY_AUDIT.md`](docs/SECURITY_AUDIT.md), rotate reused values and coordinate a history rewrite before treating the repository as clean.
 
 ## Known limitations
 
-- Access tokens use browser session storage; an HttpOnly Secure SameSite cookie plus CSRF design would reduce XSS token exposure.
-- There is no refresh-token flow, password recovery, verified-email flow, MFA, file upload, or production deployment manifest.
-- Tests use EF InMemory and do not reproduce every PostgreSQL behavior; add containerized PostgreSQL integration tests before production.
-- Audit events are useful application history, not an immutable compliance ledger.
-- SMTP requires provider configuration. Webhook delivery is best effort and has no durable retry/outbox.
-- Rate limiting is in-process; multi-instance deployments need a gateway/shared strategy.
-- Historical secret exposure still requires credential rotation and coordinated Git-history cleanup.
+- No refresh tokens, password recovery, verified email, MFA or file upload.
+- Browser tokens use session storage rather than HttpOnly cookies with a CSRF design.
+- Notifications are best effort; there is no durable queue or transactional outbox.
+- Rate limiting is in-process and needs a shared strategy for multiple instances.
+- CI has no PostgreSQL container test or browser-level end-to-end test.
+- Docker Compose is not included because it was not verified in this environment.
 
-## Reasonable future improvements
+## What I would do next
 
-Add PostgreSQL container tests, end-to-end browser tests, password recovery/MFA, operational monitoring, and a transactional outbox only if reliable integration delivery becomes a real requirement.
+Add PostgreSQL Testcontainers coverage, browser end-to-end tests, password recovery and MFA, operational tracing, and a transactional outbox only when reliable external delivery becomes a requirement.
+
+## Additional documentation
+
+- [Security audit](docs/SECURITY_AUDIT.md)
+- [Changes explained](docs/CHANGES_EXPLAINED.md)
+- [Three-minute demo script](docs/DEMO_SCRIPT.md)
+- [Interview guide](docs/INTERVIEW_GUIDE.md)

@@ -17,13 +17,13 @@ public class AssignmentsController : ControllerBase
     private readonly AppDbContext _db;
     private readonly AccessControlService _access;
     private readonly AuditService _audit;
-    private readonly NotificationService _notifications;
+    private readonly INotificationService _notifications;
 
     public AssignmentsController(
         AppDbContext db,
         AccessControlService access,
         AuditService audit,
-        NotificationService notifications)
+        INotificationService notifications)
     {
         _db = db;
         _access = access;
@@ -208,7 +208,7 @@ public class AssignmentsController : ControllerBase
             await _notifications.AssignmentPublishedAsync(assignment, cancellationToken);
         }
 
-        return Ok(assignment);
+        return Ok(ToDto(assignment));
     }
 
     [HttpPut("{id:int}")]
@@ -246,7 +246,7 @@ public class AssignmentsController : ControllerBase
             await _notifications.AssignmentPublishedAsync(assignment, cancellationToken);
         }
 
-        return Ok(assignment);
+        return Ok(ToDto(assignment));
     }
 
     [HttpDelete("{id:int}")]
@@ -275,6 +275,9 @@ public class AssignmentsController : ControllerBase
             .AsNoTracking()
             .Where(s => s.AssignmentId == id)
             .OrderByDescending(s => s.SubmittedAt)
+            .Select(s => new SubmissionResponseDto(
+                s.Id, s.AssignmentId, s.StudentEmail, s.AnswerText, s.Status,
+                s.Marks, s.Feedback, s.IsLate, s.SubmittedAt))
             .ToListAsync(cancellationToken);
 
         return Ok(submissions);
@@ -299,7 +302,29 @@ public class AssignmentsController : ControllerBase
 
         return null;
     }
+
+    private static AssignmentResponseDto ToDto(Assignment assignment) => new(
+        assignment.Id,
+        assignment.Title,
+        assignment.Description,
+        assignment.MaxMarks,
+        assignment.CreatedDate,
+        assignment.DueDate,
+        assignment.IsDraft,
+        assignment.ClassId,
+        assignment.SubjectId);
 }
+
+public sealed record AssignmentResponseDto(
+    int Id,
+    string Title,
+    string Description,
+    int MaxMarks,
+    DateTime CreatedDate,
+    DateTime? DueDate,
+    bool IsDraft,
+    int? ClassId,
+    int? SubjectId);
 
 public sealed class UpsertAssignmentDto
 {

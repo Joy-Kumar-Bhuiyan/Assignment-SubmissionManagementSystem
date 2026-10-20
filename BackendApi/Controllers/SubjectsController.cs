@@ -27,6 +27,7 @@ public class SubjectsController : ControllerBase
     public async Task<IActionResult> GetAll(CancellationToken cancellationToken) => Ok(await _db.Subjects
         .AsNoTracking()
         .OrderBy(s => s.Code)
+        .Select(s => new { s.Id, s.Name, s.Code })
         .ToListAsync(cancellationToken));
 
     [HttpPost]
@@ -45,7 +46,7 @@ public class SubjectsController : ControllerBase
         await _db.SaveChangesAsync(cancellationToken);
         _audit.Add(User, "subject.created", "Subject", entity.Id, "Subject created.");
         await _db.SaveChangesAsync(cancellationToken);
-        return Ok(entity);
+        return Ok(new { entity.Id, entity.Name, entity.Code });
     }
 
     [HttpPut("{id:int}")]
@@ -65,7 +66,7 @@ public class SubjectsController : ControllerBase
         entity.Code = code;
         _audit.Add(User, "subject.updated", "Subject", entity.Id, "Subject updated.");
         await _db.SaveChangesAsync(cancellationToken);
-        return Ok(entity);
+        return Ok(new { entity.Id, entity.Name, entity.Code });
     }
 
     [HttpDelete("{id:int}")]

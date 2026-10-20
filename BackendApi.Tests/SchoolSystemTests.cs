@@ -3,6 +3,7 @@ using System.Net.Http.Json;
 using System.Security.Claims;
 using System.Text.Encodings.Web;
 using BackendApi.Data;
+using BackendApi.Controllers;
 using BackendApi.Models;
 using BackendApi.Security;
 using BackendApi.Services;
@@ -100,6 +101,13 @@ public class SchoolSystemTests : IClassFixture<CustomWebApplicationFactory<Backe
     }
 
     [Fact]
+    public async Task Health_Endpoint_Is_PublicAndHealthy()
+    {
+        var response = await _client.GetAsync("/health");
+        response.StatusCode.Should().Be(HttpStatusCode.OK);
+    }
+
+    [Fact]
     public async Task Teacher_Cannot_Create_Assignment_Outside_Allocation()
     {
         await SeedAcademicContextAsync(1100, "teacher-outside@school.com", "student-outside@school.com", addAllocation: false);
@@ -146,6 +154,43 @@ public class SchoolSystemTests : IClassFixture<CustomWebApplicationFactory<Backe
         });
 
         response.StatusCode.Should().Be(HttpStatusCode.Forbidden);
+    }
+
+    [Fact]
+    public async Task Student_Cannot_See_Draft_Assignments()
+    {
+        await SeedAcademicContextAsync(1250, "draft-teacher@school.com", "draft-student@school.com", addAllocation: true);
+        await SeedAsync(db =>
+        {
+            db.Assignments.AddRange(
+                new Assignment
+                {
+                    Id = 1250,
+                    Title = "Visible published assignment",
+                    MaxMarks = 20,
+                    ClassId = 1250,
+                    SubjectId = 1250,
+                    IsDraft = false
+                },
+                new Assignment
+                {
+                    Id = 1251,
+                    Title = "Hidden draft assignment",
+                    MaxMarks = 20,
+                    ClassId = 1250,
+                    SubjectId = 1250,
+                    IsDraft = true
+                });
+            return db.SaveChangesAsync();
+        });
+        SetIdentity(AppRoles.Student, "draft-student@school.com");
+
+        var response = await _client.GetAsync("/api/assignments?pageSize=10");
+        var body = await response.Content.ReadAsStringAsync();
+
+        response.StatusCode.Should().Be(HttpStatusCode.OK);
+        body.Should().Contain("Visible published assignment");
+        body.Should().NotContain("Hidden draft assignment");
     }
 
     [Fact]
@@ -325,6 +370,15 @@ public class SchoolSystemTests : IClassFixture<CustomWebApplicationFactory<Backe
             Feedback = "Excellent work!"
         });
         gradeResponse.StatusCode.Should().Be(HttpStatusCode.OK);
+
+        var historyResponse = await _client.GetAsync($"/api/submissions/{submissionId}/history");
+        historyResponse.StatusCode.Should().Be(HttpStatusCode.OK);
+        var history = await historyResponse.Content.ReadFromJsonAsync<List<SubmissionStatusHistoryDto>>();
+        history.Should().NotBeNull();
+        history!.Select(item => item.ToStatus).Should().ContainInOrder(
+            SubmissionStatuses.UnderReview,
+            SubmissionStatuses.UnderReview,
+            SubmissionStatuses.Graded);
     }
 
     private void SetIdentity(string role, string email)

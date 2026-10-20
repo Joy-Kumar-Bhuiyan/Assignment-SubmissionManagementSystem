@@ -28,6 +28,7 @@ public class ClassesController : ControllerBase
         .AsNoTracking()
         .OrderBy(c => c.Name)
         .ThenBy(c => c.Section)
+        .Select(c => new { c.Id, c.Name, c.Section })
         .ToListAsync(cancellationToken));
 
     [HttpPost]
@@ -46,7 +47,7 @@ public class ClassesController : ControllerBase
         await _db.SaveChangesAsync(cancellationToken);
         _audit.Add(User, "class.created", "Class", entity.Id, "Class created.");
         await _db.SaveChangesAsync(cancellationToken);
-        return Ok(entity);
+        return Ok(new { entity.Id, entity.Name, entity.Section });
     }
 
     [HttpPut("{id:int}")]
@@ -67,7 +68,7 @@ public class ClassesController : ControllerBase
         entity.Section = section;
         _audit.Add(User, "class.updated", "Class", entity.Id, "Class updated.");
         await _db.SaveChangesAsync(cancellationToken);
-        return Ok(entity);
+        return Ok(new { entity.Id, entity.Name, entity.Section });
     }
 
     [HttpDelete("{id:int}")]
