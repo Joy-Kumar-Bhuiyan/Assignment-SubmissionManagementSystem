@@ -78,7 +78,7 @@ public class AllocationsController : ControllerBase
         await _db.SaveChangesAsync(cancellationToken);
         _audit.Add(User, "allocation.created", "TeacherAllocation", allocation.Id, "Teacher allocation created.");
         await _db.SaveChangesAsync(cancellationToken);
-        return Ok(allocation);
+        return Ok(new { allocation.Id, allocation.TeacherEmail, allocation.ClassId, allocation.SubjectId });
     }
 
     [HttpDelete("{id:int}")]

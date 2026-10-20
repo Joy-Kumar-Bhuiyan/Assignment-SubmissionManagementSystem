@@ -1,4 +1,5 @@
 using System.ComponentModel.DataAnnotations;
+using System.Security.Claims;
 using BackendApi.Data;
 using BackendApi.Models;
 using BackendApi.Security;
@@ -17,13 +18,13 @@ public class SubmissionsController : ControllerBase
     private readonly AppDbContext _db;
     private readonly AccessControlService _access;
     private readonly AuditService _audit;
-    private readonly NotificationService _notifications;
+    private readonly INotificationService _notifications;
 
     public SubmissionsController(
         AppDbContext db,
         AccessControlService access,
         AuditService audit,
-        NotificationService notifications)
+        INotificationService notifications)
     {
         _db = db;
         _access = access;
@@ -72,14 +73,16 @@ public class SubmissionsController : ControllerBase
 
             existingSubmission.AnswerText = dto.AnswerText.Trim();
             existingSubmission.SubmittedAt = DateTime.UtcNow;
+            var previousStatus = existingSubmission.Status;
             existingSubmission.Status = SubmissionStatuses.UnderReview;
             existingSubmission.IsLate = isLate;
             existingSubmission.Marks = null;
             existingSubmission.Feedback = null;
 
+            AddStatusHistory(existingSubmission.Id, previousStatus, existingSubmission.Status);
             _audit.Add(User, "submission.resubmitted", "Submission", existingSubmission.Id, "Submission revised and returned to review.");
             await _db.SaveChangesAsync(cancellationToken);
-            return Ok(existingSubmission);
+            return Ok(ToDto(existingSubmission));
         }
 
         var submission = new Submission
@@ -94,10 +97,11 @@ public class SubmissionsController : ControllerBase
 
         _db.Submissions.Add(submission);
         await _db.SaveChangesAsync(cancellationToken);
+        AddStatusHistory(submission.Id, null, submission.Status);
         _audit.Add(User, "submission.created", "Submission", submission.Id, "Submission created.");
         await _db.SaveChangesAsync(cancellationToken);
         await _notifications.SubmissionCreatedAsync(submission, cancellationToken);
-        return Ok(submission);
+        return Ok(ToDto(submission));
     }
 
     [HttpGet("my")]
@@ -111,6 +115,9 @@ public class SubmissionsController : ControllerBase
             .AsNoTracking()
             .Where(s => s.StudentEmail == email)
             .OrderByDescending(s => s.SubmittedAt)
+            .Select(s => new SubmissionResponseDto(
+                s.Id, s.AssignmentId, s.StudentEmail, s.AnswerText, s.Status,
+                s.Marks, s.Feedback, s.IsLate, s.SubmittedAt))
             .ToListAsync(cancellationToken);
 
         return Ok(submissions);
@@ -165,6 +172,9 @@ public class SubmissionsController : ControllerBase
         var items = await query
             .Skip((page - 1) * pageSize)
             .Take(pageSize)
+            .Select(s => new SubmissionResponseDto(
+                s.Id, s.AssignmentId, s.StudentEmail, s.AnswerText, s.Status,
+                s.Marks, s.Feedback, s.IsLate, s.SubmittedAt))
             .ToListAsync(cancellationToken);
 
         return Ok(new
@@ -193,14 +203,16 @@ public class SubmissionsController : ControllerBase
             return BadRequest(new { message = $"Marks cannot exceed the maximum allowed marks ({submission.Assignment.MaxMarks})." });
         }
 
+        var previousStatus = submission.Status;
         submission.Marks = grade.Marks;
         submission.Feedback = grade.Feedback.Trim();
         submission.Status = SubmissionStatuses.Graded;
 
+        AddStatusHistory(submission.Id, previousStatus, submission.Status);
         _audit.Add(User, "submission.graded", "Submission", submission.Id, "Submission graded.");
         await _db.SaveChangesAsync(cancellationToken);
         await _notifications.SubmissionGradedAsync(submission, cancellationToken);
-        return Ok(submission);
+        return Ok(ToDto(submission));
     }
 
     [HttpPatch("{id:int}/status")]
@@ -219,8 +231,10 @@ public class SubmissionsController : ControllerBase
             return BadRequest(new { message = "Status must be Returned or Rejected. Use the grade endpoint to mark work as Graded." });
         }
 
+        var previousStatus = submission.Status;
         submission.Status = dto.Status;
         submission.Marks = null;
+        AddStatusHistory(submission.Id, previousStatus, submission.Status);
         _audit.Add(
             User,
             dto.Status == SubmissionStatuses.Returned ? "submission.returned" : "submission.rejected",
@@ -234,9 +248,86 @@ public class SubmissionsController : ControllerBase
             await _notifications.SubmissionReturnedAsync(submission, cancellationToken);
         }
 
-        return Ok(submission);
+        return Ok(ToDto(submission));
     }
+
+    [HttpGet("{id:int}/history")]
+    [Authorize(Roles = $"{AppRoles.Teacher},{AppRoles.Admin}")]
+    public async Task<IActionResult> GetStatusHistory(int id, CancellationToken cancellationToken)
+    {
+        var submission = await _db.Submissions
+            .AsNoTracking()
+            .Include(item => item.Assignment)
+            .SingleOrDefaultAsync(item => item.Id == id, cancellationToken);
+
+        if (submission?.Assignment is null) return NotFound(new { message = "Submission not found." });
+        if (!await _access.CanManageAssignmentAsync(User, submission.Assignment, cancellationToken)) return Forbid();
+
+        var history = await _db.SubmissionStatusHistories
+            .AsNoTracking()
+            .Where(item => item.SubmissionId == id)
+            .OrderBy(item => item.ChangedAtUtc)
+            .Select(item => new SubmissionStatusHistoryDto(
+                item.Id,
+                item.SubmissionId,
+                item.FromStatus,
+                item.ToStatus,
+                item.ChangedByUserId,
+                item.ChangedByRole,
+                item.ChangedAtUtc))
+            .ToListAsync(cancellationToken);
+
+        return Ok(history);
+    }
+
+    private void AddStatusHistory(int submissionId, string? fromStatus, string toStatus)
+    {
+        int? userId = int.TryParse(User.FindFirstValue(ClaimTypes.NameIdentifier), out var parsedId)
+            ? parsedId
+            : null;
+
+        _db.SubmissionStatusHistories.Add(new SubmissionStatusHistory
+        {
+            SubmissionId = submissionId,
+            FromStatus = fromStatus,
+            ToStatus = toStatus,
+            ChangedByUserId = userId,
+            ChangedByRole = User.FindFirstValue(ClaimTypes.Role) ?? "Unknown",
+            ChangedAtUtc = DateTime.UtcNow
+        });
+    }
+
+    private static SubmissionResponseDto ToDto(Submission submission) => new(
+        submission.Id,
+        submission.AssignmentId,
+        submission.StudentEmail,
+        submission.AnswerText,
+        submission.Status,
+        submission.Marks,
+        submission.Feedback,
+        submission.IsLate,
+        submission.SubmittedAt);
 }
+
+public sealed record SubmissionResponseDto(
+    int Id,
+    int AssignmentId,
+    string StudentEmail,
+    string AnswerText,
+    string Status,
+    int? Marks,
+    string? Feedback,
+    bool IsLate,
+    DateTime SubmittedAt);
+
+public sealed record SubmissionStatusHistoryDto(
+    long Id,
+    int SubmissionId,
+    string? FromStatus,
+    string ToStatus,
+    int? ChangedByUserId,
+    string ChangedByRole,
+    DateTime ChangedAtUtc);
 
 public sealed class CreateSubmissionDto
 {

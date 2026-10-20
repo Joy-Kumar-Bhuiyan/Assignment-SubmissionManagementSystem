@@ -15,6 +15,7 @@ public class AppDbContext : DbContext
     public DbSet<Subject> Subjects => Set<Subject>();
     public DbSet<TeacherAllocation> TeacherAllocations => Set<TeacherAllocation>();
     public DbSet<AuditEvent> AuditEvents => Set<AuditEvent>();
+    public DbSet<SubmissionStatusHistory> SubmissionStatusHistories => Set<SubmissionStatusHistory>();
 
     protected override void OnModelCreating(ModelBuilder modelBuilder)
     {
@@ -84,6 +85,18 @@ public class AppDbContext : DbContext
             entity.HasIndex(a => a.Action);
             entity.HasIndex(a => new { a.EntityType, a.EntityId });
             entity.HasIndex(a => a.PerformedByUserId);
+        });
+
+        modelBuilder.Entity<SubmissionStatusHistory>(entity =>
+        {
+            entity.Property(item => item.FromStatus).HasMaxLength(30);
+            entity.Property(item => item.ToStatus).HasMaxLength(30);
+            entity.Property(item => item.ChangedByRole).HasMaxLength(16);
+            entity.HasIndex(item => new { item.SubmissionId, item.ChangedAtUtc });
+            entity.HasOne(item => item.Submission)
+                .WithMany()
+                .HasForeignKey(item => item.SubmissionId)
+                .OnDelete(DeleteBehavior.Cascade);
         });
     }
 }

@@ -18,7 +18,6 @@ public class SettingsController : ControllerBase
     {
         "AcademicYear",
         "AllowLateSubmissions",
-        "MaxFileSizeMB",
         "SystemAnnouncement"
     };
 
@@ -38,7 +37,6 @@ public class SettingsController : ControllerBase
         {
             ["AcademicYear"] = string.Empty,
             ["AllowLateSubmissions"] = "false",
-            ["MaxFileSizeMB"] = "10",
             ["SystemAnnouncement"] = string.Empty
         };
 
@@ -87,7 +85,6 @@ public class SettingsController : ControllerBase
     private static string? ValidateValue(string key, string value) => key switch
     {
         "AllowLateSubmissions" when !bool.TryParse(value, out _) => "AllowLateSubmissions must be true or false.",
-        "MaxFileSizeMB" when !int.TryParse(value, out var size) || size is < 1 or > 100 => "MaxFileSizeMB must be between 1 and 100.",
         _ => null
     };
 }

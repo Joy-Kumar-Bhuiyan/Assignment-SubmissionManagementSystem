@@ -1,6 +1,6 @@
 # Security audit and hardening report
 
-**Audit dates:** 2026-10-18 and 2026-10-19
+**Audit dates:** 2026-10-18, 2026-10-19 and 2026-10-20
 **Scope:** ASP.NET Core API, React/Vite client, data model, dependency manifests, tests, and repository hygiene
 
 ## Executive result
@@ -87,13 +87,13 @@ git push origin --force --tags
 
 - `AuditEvents` is an ordinary mutable application table, not an append-only/tamper-evident compliance store.
 - Creating an integer-key entity and its audit row requires two `SaveChangesAsync` calls so the generated entity ID is known. A rare audit-write failure after the core insert could leave that change without its audit row. A transactional interceptor/outbox is a future option if compliance requirements justify it.
-- Email/webhook delivery is best effort. There is no retry queue, idempotency key, signature, or durable outbox.
+- Email/webhook delivery is best effort. Webhooks use an HMAC-SHA256 signature and one immediate transient-failure retry, but there is no durable retry queue, idempotency key, or transactional outbox.
 - SMTP recipient addresses appear in operational logs when delivery is disabled/fails; production log access and retention must be restricted.
 - EF InMemory tests do not prove PostgreSQL translation/constraint behavior for every new query.
 
 ### Deployment requirements for new features
 
-- Apply the `AddPortfolioFeatures` migration in staging before production.
+- Apply the `AddPortfolioFeatures` and `AddSubmissionStatusHistory` migrations in staging before production.
 - Keep `Email:Enabled` and `Webhook:Enabled` false until secrets/endpoints are configured through a secret manager and tested.
 - Restrict who can change deployment environment variables. A trusted operator could still configure a webhook to an internal destination.
 - Use an approved SMTP account/from address, HTTPS webhook receiver, centralized logs with access controls, and monitoring for repeated provider failures.

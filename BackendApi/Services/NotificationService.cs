@@ -5,7 +5,15 @@ using Microsoft.EntityFrameworkCore;
 
 namespace BackendApi.Services;
 
-public sealed class NotificationService
+public interface INotificationService
+{
+    Task AssignmentPublishedAsync(Assignment assignment, CancellationToken cancellationToken);
+    Task SubmissionCreatedAsync(Submission submission, CancellationToken cancellationToken);
+    Task SubmissionGradedAsync(Submission submission, CancellationToken cancellationToken);
+    Task SubmissionReturnedAsync(Submission submission, CancellationToken cancellationToken);
+}
+
+public sealed class NotificationService : INotificationService
 {
     private readonly AppDbContext _db;
     private readonly IEmailService _email;

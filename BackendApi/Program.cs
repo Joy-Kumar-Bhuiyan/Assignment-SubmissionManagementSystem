@@ -46,7 +46,7 @@ public class Program
         builder.Services.AddScoped<PasswordService>();
         builder.Services.AddScoped<AccessControlService>();
         builder.Services.AddScoped<AuditService>();
-        builder.Services.AddScoped<NotificationService>();
+        builder.Services.AddScoped<INotificationService, NotificationService>();
 
         builder.Services.AddOptions<EmailOptions>()
             .Bind(builder.Configuration.GetSection(EmailOptions.SectionName))
@@ -71,8 +71,9 @@ public class Program
             .Validate(options => !options.Enabled ||
                 (Uri.TryCreate(options.Url, UriKind.Absolute, out var uri) &&
                  (uri.Scheme == Uri.UriSchemeHttps || (allowInsecureWebhook && uri.Scheme == Uri.UriSchemeHttp)) &&
+                 Encoding.UTF8.GetByteCount(options.Secret) >= 32 &&
                  options.TimeoutSeconds is >= 1 and <= 30),
-                "Enabled webhooks require a valid HTTPS URL and a timeout from 1 to 30 seconds.")
+                "Enabled webhooks require a valid HTTPS URL, a secret of at least 32 bytes, and a timeout from 1 to 30 seconds.")
             .ValidateOnStart();
         builder.Services.AddHttpClient<IOutgoingWebhookService, ConfiguredWebhookService>((services, client) =>
         {
